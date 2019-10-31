@@ -15,6 +15,15 @@ Here it is detecting edges:
 <img src = 'examples/edges.gif' height = '256px'>
 </p>
 
+### Dependancies
+- Python 3.6+
+- Pillow
+- Matplotlib 3.0+
+- Numpy
+- TensorFlow 2.0+
+  - The packages necessary to run TensorFlow
+     - Information on how to run TensorFlow on GPU can be found [here](https://www.tensorflow.org/install/)
+
 ### Flags
 - `--max-iterations` the maximum number of times to iterate the algorithm that determines convergence for each frame. Default: `2000`
 - `--x_res` resolution of samples along the x-axis. Default: `512`
