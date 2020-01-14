@@ -21,12 +21,12 @@ def build_parser():
                         dest='max_iterations', help='maximum number of times to iterate logisitc mapping',
                         metavar='MAX_ITERATIONS', default=2000)
     
-    parser.add_argument('--x_res', type=int,
-                        dest='x_res', help='resolution of samples along the x-axis',
+    parser.add_argument('--x-res', type=int,
+                        dest='x-res', help='resolution of samples along the x-axis',
                         metavar='X_RES', default=512)
 
-    parser.add_argument('--y_res', type=int,
-                        dest='y_res', help='resolution of samples along the y-axis',
+    parser.add_argument('--y-res', type=int,
+                        dest='y-res', help='resolution of samples along the y-axis',
                         metavar='SAMPLE_DIR', default=512)
 
     parser.add_argument('--x-center', type=float,
