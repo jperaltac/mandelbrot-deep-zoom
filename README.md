@@ -26,8 +26,8 @@ Here it is detecting edges:
 
 ### Flags
 - `--max-iterations` the maximum number of times to iterate the algorithm that determines convergence for each frame. Default: `2000`
-- `--x_res` resolution of samples along the x-axis. Default: `512`
-- `--y_res` resolution of samples along the y-axis. Default: `512`
+- `--x-res` resolution of samples along the x-axis. Default: `512`
+- `--y-res` resolution of samples along the y-axis. Default: `512`
 - `--x-center` x coordinate in the complex plane to start the zoom at. Default: `-0.75`
 - `--y-center` y coordinate in the complex plane to start the zoom at. Default: `0`
 - `--x-width` starting width of the sample window in the complex plane. Default: `2.5`
