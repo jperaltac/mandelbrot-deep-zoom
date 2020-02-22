@@ -10,7 +10,7 @@ You can run the zoom generator with all default options simply with `python zoom
 
 ### How does it know where to zoom in?
 The Program detects the edges of the mandelbrot set and keeps itself centered there. 
-Here it is detecting edges:
+Here is the edge detection in action:
 <p align = 'center'>
 <img src = 'examples/edges.gif' height = '256px'>
 </p>
