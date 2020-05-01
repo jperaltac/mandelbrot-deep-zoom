@@ -4,3 +4,5 @@ numpy==1.17.2
 Pillow==7.1.2
 tensorflow-gpu==2.0.0
 wrapt==1.12.1
+imageio==2.8.0
+
