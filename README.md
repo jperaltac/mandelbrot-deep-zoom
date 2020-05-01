@@ -24,6 +24,8 @@ Here is the edge detection in action:
   - The packages necessary to run TensorFlow
      - Information on how to run TensorFlow on GPU can be found [here](https://www.tensorflow.org/install/)
 
+install dependancies with `pip3 install -r requirements.txt` or `requirements-gpu.txt` if you wish to use tensorflow for gpu
+
 ### Flags
 - `--max-iterations` the maximum number of times to iterate the algorithm that determines convergence for each frame. Default: `2000`
 - `--x-res` resolution of samples along the x-axis. Default: `512`
@@ -34,5 +36,7 @@ Here is the edge detection in action:
 - `--y-width` starting height of the sample window in the complex plane. Default: `2.5`
 - `--zoom-factor` the factor by which to multiply the window size each frame. Choose <1 for zoom in, >1 for zoom out. Default: `0.8`
 - `--frames` number of frames to generate. Default: `100`
-- `--save-frames` flag to save each frame of the zoom as a separate .png file
+- `--save-frames` flag to save each frame of the zoom as a colormapped .png file
+- `--save-mono` flag to save each frame as a monochrome .png
+- `--frames-path` path to the directory in which to store the individual frames. Default: `./frames`
 - `--show-edges` flag to render the edge detection along side the mandelbrot zoom
