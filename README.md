@@ -36,7 +36,8 @@ install dependancies with `pip3 install -r requirements.txt` or `requirements-gp
 - `--y-width` starting height of the sample window in the complex plane. Default: `2.5`
 - `--zoom-factor` the factor by which to multiply the window size each frame. Choose <1 for zoom in, >1 for zoom out. Default: `0.8`
 - `--frames` number of frames to generate. Default: `100`
-- `--save-frames` flag to save each frame of the zoom as a colormapped .png file
-- `--save-mono` flag to save each frame as a monochrome .png
+- `--save-frames` flag to save each frame of the zoom as a colormapped image file
+- `--save-mono` flag to save each frame as a monochrome iamge
+- `--format` file format for the saved frames. Can be any file extension supported by Pillow. Example: `jpeg`, `png`, `bmp`, etc. Default: `\png\`
 - `--frames-path` path to the directory in which to store the individual frames. Default: `./frames`
 - `--show-edges` flag to render the edge detection along side the mandelbrot zoom

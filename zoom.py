@@ -10,7 +10,6 @@ from IPython.display import Image, display
 from matplotlib import cm # make sure matplotlib 3.0+ is installed
 import matplotlib
 
-print("TensorFlow 2.0 is required for this notebook")
 print("TensorFlow version:", tf.__version__)
 from argparse import ArgumentParser
 
@@ -53,11 +52,15 @@ def build_parser():
                         dest='frames', help='number of frames to generate',
                         metavar='FRAMES', default=100)
 
-    parser.add_argument('--save-frames', help='flag to save each frame of the zoom as a .png',
+    parser.add_argument('--save-frames', help='flag to save each frame of the zoom as a iamge',
                         dest='save_frames', action="store_true")
 
-    parser.add_argument('--save-mono', help='flag to save each frame as a monochrome .png',
+    parser.add_argument('--save-mono', help='flag to save each frame as a monochrome image',
                         dest='save_mono', action="store_true")
+
+    parser.add_argument('--format', type=str,
+                        dest='format', help='file format for the saved frames. Can be any file extension supported by Pillow. Example: \'jpeg\', \'png\', \'bmp\', etc. Default: \'png\'',
+                        metavar='FORMAT', default='png')
 
     parser.add_argument('--frames-path', type=str,
                         dest='frames_path', help='path to the directory in which to store the individual frames',
@@ -202,7 +205,7 @@ def main():
 
         if opt.save_mono:
             img = PIL.Image.fromarray( np.uint8( 255 * (np.abs((fractal%512)-255) / 256) ) )
-            img.save(os.path.join(opt.frames_path, 'mono{0:03d}.png'.format(i)))
+            img.save(os.path.join(opt.frames_path, 'mono{0:03d}.{1}'.format(i, opt.format)))
 
         fractal = np.uint8(cm.twilight_shifted(fractal%512)*255)
         if opt.show_edges:
@@ -210,12 +213,12 @@ def main():
             img = PIL.Image.fromarray(np.concatenate((fractal, edges), axis=1))
             images.append(img)
             if opt.save_frames:	
-                img.save(os.path.join(opt.frames_path, 'frame{0:03d}.png'.format(i)))
+                img.save(os.path.join(opt.frames_path, 'frame{0:03d}.{1}'.format(i, opt.format)))
         else:
             img = PIL.Image.fromarray(fractal)
             images.append(img)
             if opt.save_frames:	
-                img.save(os.path.join(opt.frames_path, 'frame{0:03d}.png'.format(i)))
+                img.save(os.path.join(opt.frames_path, 'frame{0:03d}.{1}'.format(i, opt.format)))
 
 
     import imageio
