@@ -6,7 +6,7 @@ A python routine to generate an animation of a mandelbrot zoom. It uses TensorFl
 
 ## Documentation
 ### Generating a Mandelbrot Zoom
-You can run the zoom generator with all default options simply with `python zoom.py`. This will randomly choose a location on the edge of the mandelbrot set to zoom into. Check out the [Flags section](#flags) for run-time options.
+You can run the zoom generator with all default options simply with `python zoom.py`. This will randomly choose a location on the edge of the mandelbrot set to zoom into. Check out the [Flags section](#flags) for different options.
 
 ### How does it know where to zoom in?
 The Program detects the edges of the mandelbrot set and keeps itself centered there. 
@@ -38,6 +38,6 @@ install dependancies with `pip3 install -r requirements.txt` or `requirements-gp
 - `--frames` number of frames to generate. Default: `130`
 - `--save-frames` flag to save each frame of the zoom as a colormapped image file
 - `--save-mono` flag to save each frame as a monochrome iamge
-- `--format` file format for the saved frames. Can be any file extension supported by Pillow. Example: `jpeg`, `png`, `bmp`, etc. Default: `\png\`
+- `--format` file format for the saved frames. Can be any file extension supported by Pillow. Example: `jpeg`, `png`, `bmp`, etc. Default: `png`
 - `--frames-path` path to the directory in which to store the individual frames. Default: `./frames`
 - `--show-edges` flag to render the edge detection along side the mandelbrot zoom
