@@ -22,11 +22,11 @@ def build_parser():
                         metavar='MAX_ITERATIONS', default=2000)
     
     parser.add_argument('--x-res', type=int,
-                        dest='x-res', help='resolution of samples along the x-axis',
+                        dest='x_res', help='resolution of samples along the x-axis',
                         metavar='X_RES', default=512)
 
     parser.add_argument('--y-res', type=int,
-                        dest='y-res', help='resolution of samples along the y-axis',
+                        dest='y_res', help='resolution of samples along the y-axis',
                         metavar='SAMPLE_DIR', default=512)
 
     parser.add_argument('--x-center', type=float,
@@ -55,6 +55,14 @@ def build_parser():
 
     parser.add_argument('--save-frames', help='flag to save each frame of the zoom as a .png',
                         dest='save_frames', action="store_true")
+
+    parser.add_argument('--save-mono', help='flag to save each frame as a monochrome .png',
+                        dest='save_mono', action="store_true")
+
+    parser.add_argument('--frames-path', type=str,
+                        dest='frames_path', help='path to the directory in which to store the individual frames',
+                        metavar='FRAMES_PATH', default='./frames')
+
     
     parser.add_argument('--show-edges', help='render the edge detection beside',
                         dest='show_edges', action="store_true")
@@ -180,29 +188,35 @@ def main():
                                            opt.max_iterations)
     images = []
     # print(np.max(cm.twilight_shifted(np.concatenate(image_generator.next_image(zoom_factor=0.8), axis=1))))
+
+    if opt.save_frames or opt.save_mono:
+        import os
+        try:
+            os.mkdir(opt.frames_path)
+        except:
+            pass
+
     for i in range(opt.frames):
         print("frame {0} out of {1}".format(i, opt.frames), end='\r')
         fractal, edges = image_generator.next_image(zoom_factor=opt.zoom_factor)
 
+        if opt.save_mono:
+            img = PIL.Image.fromarray( np.uint8( 255 * (np.abs((fractal%512)-255) / 256) ) )
+            img.save(os.path.join(opt.frames_path, 'mono{0:03d}.png'.format(i)))
+
         fractal = np.uint8(cm.twilight_shifted(fractal%512)*255)
         if opt.show_edges:
             edges = np.uint8(np.stack((edges,)*4, axis=-1)*255)
-            images.append(PIL.Image.fromarray(np.concatenate((fractal, edges), axis=1)))
+            img = PIL.Image.fromarray(np.concatenate((fractal, edges), axis=1))
+            images.append(img)
+            if opt.save_frames:	
+                img.save(os.path.join(opt.frames_path, 'frame{0:03d}.png'.format(i)))
         else:
-            images.append(PIL.Image.fromarray(fractal))
+            img = PIL.Image.fromarray(fractal)
+            images.append(img)
+            if opt.save_frames:	
+                img.save(os.path.join(opt.frames_path, 'frame{0:03d}.png'.format(i)))
 
-    if opt.save_frames:
-        import os
-
-        # define the name of the directory to be created
-        path = "./frames/"
-        try:
-            os.mkdir(path)
-        except:
-            pass
-            
-        for i, image in enumerate(images):
-            image.save('./frames/frame{0}.png'.format(i))
 
     import imageio
     images[0].save('movie.gif',
