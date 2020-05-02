@@ -38,6 +38,6 @@ install dependancies with `pip3 install -r requirements.txt` or `requirements-gp
 - `--frames` number of frames to generate. Default: `130`
 - `--save-frames` flag to save each frame of the zoom as a colormapped image file
 - `--save-mono` flag to save each frame as a monochrome iamge
-- `--format` file format for the saved frames. Can be any file extension supported by Pillow. Example: `jpeg`, `png`, `bmp`, etc. Default: `\png\`
+- `--format` file format for the saved frames. Can be any file extension supported by Pillow. Example: `jpeg`, `png`, `bmp`, etc. Default: `png`
 - `--frames-path` path to the directory in which to store the individual frames. Default: `./frames`
 - `--show-edges` flag to render the edge detection along side the mandelbrot zoom
