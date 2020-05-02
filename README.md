@@ -6,7 +6,7 @@ A python routine to generate an animation of a mandelbrot zoom. It uses TensorFl
 
 ## Documentation
 ### Generating a Mandelbrot Zoom
-You can run the zoom generator with all default options simply with `python zoom.py`. This will randomly choose a location on the edge of the mandelbrot set to zoom into. Check out the [Flags section](#flags) for run-time options.
+You can run the zoom generator with all default options simply with `python zoom.py`. This will randomly choose a location on the edge of the mandelbrot set to zoom into. Check out the [Flags section](#flags) for different options.
 
 ### How does it know where to zoom in?
 The Program detects the edges of the mandelbrot set and keeps itself centered there. 
