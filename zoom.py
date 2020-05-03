@@ -50,7 +50,7 @@ def build_parser():
 
     parser.add_argument('--frames', type=int,
                         dest='frames', help='number of frames to generate',
-                        metavar='FRAMES', default=130)
+                        metavar='FRAMES', default=100)
 
     parser.add_argument('--save-frames', help='flag to save each frame of the zoom as a iamge',
                         dest='save_frames', action="store_true")
