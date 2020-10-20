@@ -95,7 +95,7 @@ class mandelbrot_generator:
         self.y_width = np.float128(y_width)
         self.max_n = max_n
         
-        _, Z, edges = self.__process()
+        _, Z, edges = self.process()
         
         # choose an edge point at random to focus on
         edge_indices = np.argwhere(edges == 1)
@@ -117,7 +117,7 @@ class mandelbrot_generator:
         #_ns = tf.add(_ns, np.multiply(newly_diverged, antialiasing_bias))
         return _xs, _zs, _ns, np.array(not_diverged)
 
-    def __process(self):
+    def process(self):
         x_min = self.x_center - self.x_width/2
         x_max = self.x_center + self.x_width/2
         y_min = self.y_center - self.y_width/2
@@ -157,7 +157,7 @@ class mandelbrot_generator:
         return iterations - np.array(ns), Z, edges
           
     def next_image(self, zoom_factor=0.9):
-        fractal, Z, edges = self.__process()
+        fractal, Z, edges = self.process()
     
         # choose an edge point nearest to the center
         zoom_center = [0, 0]
