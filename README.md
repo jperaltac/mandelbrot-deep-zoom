@@ -63,6 +63,7 @@ The script saves an animated `movie.gif`. Use `--save-frames` to also write indi
 - `--frames`           Number of frames to generate. Default: `100`
 - `--save-frames`      Save each colored frame to disk
 - `--save-mono`        Save each frame as a monochrome image
+- `--colormap`         Matplotlib colormap used to colorize the fractal (e.g. `viridis`, `plasma`). Default: `twilight_shifted`
 - `--format`           File format for saved frames (e.g. `png`, `jpeg`). Default: `png`
 - `--frames-path`      Directory to store individual frames. Default: `./frames`
 - `--show-edges`       Render edge detection alongside the Mandelbrot zoom
