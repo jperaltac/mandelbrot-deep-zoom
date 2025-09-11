@@ -1,43 +1,76 @@
-# mandelbrot-zoomer
-A python routine to generate an animation of a mandelbrot zoom. It uses TensorFlow 2.0 to accelerate the matrix arithmetic involved in visualizing the mandelbrot set.
-<p align = 'center'>
-<img src = 'examples/movie.gif' height = '512px'>
+# Mandelbrot Zoomer
+
+A Python routine to generate deep zoom animations of the Mandelbrot set using TensorFlow.
+
+<p align="center">
+  <img src="examples/movie.gif" height="512px" />
 </p>
 
-## Documentation
-### Generating a Mandelbrot Zoom
-You can run the zoom generator with all default options simply with `python zoom.py`. This will randomly choose a location on the edge of the mandelbrot set to zoom into. Check out the [Flags section](#flags) for different options.
+## Installation
 
-### How does it know where to zoom in?
-The Program detects the edges of the mandelbrot set and keeps itself centered there. 
-Here is the edge detection in action:
-<p align = 'center'>
-<img src = 'examples/edges.gif' height = '256px'>
+Requires **Python 3.10+**.
+
+### CPU only
+
+```bash
+pip install -r requirements.txt
+```
+
+### GPU (CUDA)
+
+```bash
+pip install -r requirements-gpu.txt
+```
+
+TensorFlow automatically uses the first available GPU. To force a CPU run even on a GPU machine:
+
+```bash
+CUDA_VISIBLE_DEVICES="" python zoom.py
+```
+
+## Usage
+
+Generate a zoom with the default settings:
+
+```bash
+python zoom.py
+```
+
+Example CPU run with custom resolution and frame count:
+
+```bash
+python zoom.py --frames 100 --x-res 512 --y-res 512
+```
+
+Example GPU run (assuming a CUDA-capable device is available):
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python zoom.py --frames 300 --zoom-factor 0.9
+```
+
+The script saves an animated `movie.gif`. Use `--save-frames` to also write individual images to disk.
+
+## Command-line Flags
+
+- `--max-iterations`   Maximum iterations per pixel. Default: `2000`
+- `--x-res`            Resolution along the x-axis. Default: `512`
+- `--y-res`            Resolution along the y-axis. Default: `512`
+- `--x-center`         Starting x coordinate in the complex plane. Default: `-0.75`
+- `--y-center`         Starting y coordinate in the complex plane. Default: `0`
+- `--x-width`          Initial width of the sample window. Default: `2.5`
+- `--y-width`          Initial height of the sample window. Default: `2.5`
+- `--zoom-factor`      Factor applied to window size each frame (<1 zooms in). Default: `0.8`
+- `--frames`           Number of frames to generate. Default: `100`
+- `--save-frames`      Save each colored frame to disk
+- `--save-mono`        Save each frame as a monochrome image
+- `--format`           File format for saved frames (e.g. `png`, `jpeg`). Default: `png`
+- `--frames-path`      Directory to store individual frames. Default: `./frames`
+- `--show-edges`       Render edge detection alongside the Mandelbrot zoom
+
+## How does it know where to zoom?
+
+The program detects the edges of the Mandelbrot set and keeps itself centered on them.
+
+<p align="center">
+  <img src="examples/edges.gif" height="256px" />
 </p>
-
-### Dependancies
-- Python 3.6+
-- Pillow
-- Matplotlib 3.0+
-- Numpy
-- TensorFlow 2.0+
-  - The packages necessary to run TensorFlow
-     - Information on how to run TensorFlow on GPU can be found [here](https://www.tensorflow.org/install/)
-
-install dependancies with `pip3 install -r requirements.txt` or `requirements-gpu.txt` if you wish to use tensorflow for gpu
-
-### Flags
-- `--max-iterations` the maximum number of times to iterate the algorithm that determines convergence for each frame. Default: `2000`
-- `--x-res` resolution of samples along the x-axis. Default: `512`
-- `--y-res` resolution of samples along the y-axis. Default: `512`
-- `--x-center` x coordinate in the complex plane to start the zoom at. Default: `-0.75`
-- `--y-center` y coordinate in the complex plane to start the zoom at. Default: `0`
-- `--x-width` starting width of the sample window in the complex plane. Default: `2.5`
-- `--y-width` starting height of the sample window in the complex plane. Default: `2.5`
-- `--zoom-factor` the factor by which to multiply the window size each frame. Choose <1 for zoom in, >1 for zoom out. Default: `0.8`
-- `--frames` number of frames to generate. Default: `100`
-- `--save-frames` flag to save each frame of the zoom as a colormapped image file
-- `--save-mono` flag to save each frame as a monochrome iamge
-- `--format` file format for the saved frames. Can be any file extension supported by Pillow. Example: `jpeg`, `png`, `bmp`, etc. Default: `png`
-- `--frames-path` path to the directory in which to store the individual frames. Default: `./frames`
-- `--show-edges` flag to render the edge detection along side the mandelbrot zoom
