@@ -3,12 +3,8 @@ import tensorflow as tf
 import numpy as np
 
 # Imports for visualization
-from PIL import Image
 import PIL.Image
-from io import BytesIO
-from IPython.display import Image, display
 from matplotlib import cm  # make sure matplotlib 3.0+ is installed
-import matplotlib
 
 print("TensorFlow version:", tf.__version__)
 
@@ -37,7 +33,7 @@ def build_parser():
     parser = ArgumentParser()
 
     parser.add_argument('--max-iterations', type=int,
-                        dest='max_iterations', help='maximum number of times to iterate logisitc mapping',
+                        dest='max_iterations', help='maximum number of times to iterate logistic mapping',
                         metavar='MAX_ITERATIONS', default=2000)
 
     parser.add_argument('--x-res', type=int,
@@ -46,7 +42,7 @@ def build_parser():
 
     parser.add_argument('--y-res', type=int,
                         dest='y_res', help='resolution of samples along the y-axis',
-                        metavar='SAMPLE_DIR', default=512)
+                        metavar='Y_RES', default=512)
 
     parser.add_argument('--x-center', type=float,
                         dest='x_center', help='x coordinate in the complex plane to start the zoom at',
@@ -65,18 +61,22 @@ def build_parser():
                         metavar='Y_WIDTH', default=2.5)
 
     parser.add_argument('--zoom-factor', type=float,
-                        dest='zoom_factor', help='the factor to by which to multiply the window size each frame. Choose < 1 for zoom in, >1 for zoom out',
+                        dest='zoom_factor', help='the factor by which to multiply the window size each frame. Choose < 1 for zoom in, >1 for zoom out',
                         metavar='ZOOM_FACTOR', default=0.8)
 
     parser.add_argument('--frames', type=int,
                         dest='frames', help='number of frames to generate',
                         metavar='FRAMES', default=100)
 
-    parser.add_argument('--save-frames', help='flag to save each frame of the zoom as a iamge',
+    parser.add_argument('--save-frames', help='flag to save each frame of the zoom as an image',
                         dest='save_frames', action="store_true")
 
     parser.add_argument('--save-mono', help='flag to save each frame as a monochrome image',
                         dest='save_mono', action="store_true")
+
+    parser.add_argument('--colormap', type=str,
+                        dest='colormap', help='matplotlib colormap to colorize the fractal (e.g. "viridis", "inferno")',
+                        metavar='COLORMAP', default='twilight_shifted')
 
     parser.add_argument('--format', type=str,
                         dest='format', help='file format for the saved frames. Can be any file extension supported by Pillow. Example: \'jpeg\', \'png\', \'bmp\', etc. Default: \'png\'',
@@ -208,7 +208,7 @@ def main():
                                            opt.y_width,
                                            opt.max_iterations)
     images = []
-    # print(np.max(cm.twilight_shifted(np.concatenate(image_generator.next_image(zoom_factor=0.8), axis=1))))
+    cmap = cm.get_cmap(opt.colormap)
 
     if opt.save_frames or opt.save_mono:
         import os
@@ -226,7 +226,7 @@ def main():
                 np.uint8(255 * (np.abs((fractal % 512) - 255) / 256)))
             img.save(os.path.join(opt.frames_path, 'mono{0:03d}.{1}'.format(i, opt.format)))
 
-        fractal = np.uint8(cm.twilight_shifted(fractal % 512) * 255)
+        fractal = np.uint8(cmap(fractal % 512) * 255)
         if opt.show_edges:
             edges = np.uint8(np.stack((edges,)*4, axis=-1)*255)
             img = PIL.Image.fromarray(np.concatenate((fractal, edges), axis=1))
