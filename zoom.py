@@ -3,6 +3,7 @@ import sys
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 _VERBOSE_FLAGS = {"--verbose", "-v"}
 _cli_verbose = any(arg in _VERBOSE_FLAGS for arg in sys.argv[1:])
@@ -323,6 +324,109 @@ def _pil_format_name(ext: str) -> str:
     return upper
 
 
+def write_single_image(image: PIL.Image.Image, output_path: Path, image_format: str) -> None:
+    """Write a single image to ``output_path`` using the provided format."""
+
+    pil_format = _pil_format_name(image_format)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(str(output_path), format=pil_format)
+
+
+def write_frame_sequence(
+    image: PIL.Image.Image,
+    frame_dir: Path,
+    index: int,
+    digits: int,
+    image_format: str,
+    prefix: str,
+) -> Path:
+    """Persist a frame in a numbered sequence inside ``frame_dir``."""
+
+    pil_format = _pil_format_name(image_format)
+    frame_path = frame_dir / f"{prefix}{index:0{digits}d}.{image_format}"
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    image.save(str(frame_path), format=pil_format)
+    return frame_path
+
+
+def write_gif(writer: Any, frame_array: np.ndarray) -> None:
+    """Append ``frame_array`` to an active GIF writer."""
+
+    writer.append_data(frame_array)
+
+
+@dataclass
+class OutputWriters:
+    config: OutputConfig
+    frame_digits: int
+    image_format: str
+    show_edges: bool
+
+    def __post_init__(self) -> None:
+        self._needs_mono_frames = bool(self.config.save_mono_frames and self.config.frame_dir is not None)
+        self._needs_color_frames = bool(self.config.save_color_frames and self.config.frame_dir is not None)
+        self._needs_final_image = bool("image" in self.config.modes and self.config.image_path is not None)
+        self._gif_writer = None
+        if "gif" in self.config.modes and self.config.gif_path is not None:
+            self._gif_writer = imageio.get_writer(str(self.config.gif_path), mode='I', duration=0.1, loop=0)
+
+    def requires_color_array(self, frame_index: int, total_frames: int) -> bool:
+        if self._needs_color_frames or self._gif_writer is not None:
+            return True
+        if self.show_edges and self._needs_final_image and total_frames:
+            return frame_index == total_frames - 1
+        return self._needs_final_image and total_frames and frame_index == total_frames - 1
+
+    def requires_color_image(self, frame_index: int, total_frames: int) -> bool:
+        if self._needs_color_frames:
+            return True
+        return self._needs_final_image and total_frames and frame_index == total_frames - 1
+
+    def requires_mono_image(self) -> bool:
+        return self._needs_mono_frames
+
+    def should_store_final_image(self, frame_index: int, total_frames: int) -> bool:
+        return self._needs_final_image and total_frames and frame_index == total_frames - 1
+
+    def write_color_outputs(
+        self,
+        frame_index: int,
+        frame_array: np.ndarray,
+        color_image: PIL.Image.Image | None,
+    ) -> None:
+        if self._gif_writer is not None:
+            write_gif(self._gif_writer, frame_array)
+        if self._needs_color_frames and color_image is not None and self.config.frame_dir is not None:
+            write_frame_sequence(
+                color_image,
+                self.config.frame_dir,
+                frame_index,
+                self.frame_digits,
+                self.image_format,
+                "frame",
+            )
+
+    def write_mono_output(self, frame_index: int, mono_image: PIL.Image.Image) -> None:
+        if self._needs_mono_frames and self.config.frame_dir is not None:
+            write_frame_sequence(
+                mono_image,
+                self.config.frame_dir,
+                frame_index,
+                self.frame_digits,
+                self.image_format,
+                "mono",
+            )
+
+    def finalize(self, final_image: PIL.Image.Image | None) -> None:
+        if self._needs_final_image and final_image is not None and self.config.image_path is not None:
+            write_single_image(final_image, self.config.image_path, self.image_format)
+
+    def close(self) -> None:
+        if self._gif_writer is not None:
+            self._gif_writer.close()
+            self._gif_writer = None
+
+
 HORIZON = 4
 #LOG_HORIZON = np.log(np.log(HORIZON))/np.log(2)
 
@@ -555,13 +659,15 @@ def main():
 
     per_frame_factors = np.exp(per_frame_logs) if per_frame_logs.size else np.array([], dtype=np.float64)
 
-    gif_writer = None
-    if "gif" in output_config.modes and output_config.gif_path is not None:
-        gif_writer = imageio.get_writer(str(output_config.gif_path), mode='I', duration=0.1, loop=0)
-
     frame_digits = max(3, len(str(max(opt.frames - 1, 0))))
+    writers = OutputWriters(
+        output_config,
+        frame_digits=frame_digits,
+        image_format=output_config.image_format,
+        show_edges=bool(opt.show_edges),
+    )
+
     final_color_image: PIL.Image.Image | None = None
-    pil_format = _pil_format_name(output_config.image_format)
 
     try:
         for i in range(opt.frames):
@@ -569,15 +675,18 @@ def main():
             zoom_factor = per_frame_factors[i] if per_frame_factors.size else opt.zoom_factor
             fractal, iters, edges = image_generator.next_image(zoom_factor=zoom_factor)
 
+            needs_color_array = writers.requires_color_array(i, opt.frames)
+            needs_mono = writers.requires_mono_image()
+
+            if not (needs_color_array or needs_mono):
+                continue
+
             inside = (iters >= opt.max_iterations)
             v = fractal.astype(np.float64, copy=True)
             normalize_mode = getattr(opt, 'normalize', 'outside')
             eps = 1e-12
 
-            if normalize_mode == 'outside':
-                selection = v[~inside]
-            else:
-                selection = v
+            selection = v[~inside] if normalize_mode == 'outside' else v
 
             if selection.size:
                 lo = np.percentile(selection, getattr(opt, 'clip_low', 0.5))
@@ -590,11 +699,13 @@ def main():
             gamma = getattr(opt, 'gamma', 0.85)
             v = np.clip(v, 0.0, 1.0) ** gamma
 
-            if output_config.save_mono_frames:
+            if needs_mono:
                 mono = np.uint8(np.clip(v, 0.0, 1.0) * 255)
                 mono_img = PIL.Image.fromarray(mono)
-                mono_path = output_config.frame_dir / f"mono{i:0{frame_digits}d}.{output_config.image_format}"
-                mono_img.save(str(mono_path), format=pil_format)
+                writers.write_mono_output(i, mono_img)
+
+            if not needs_color_array:
+                continue
 
             cmap_input = 1.0 - v if getattr(opt, 'invert', False) else v
             rgba = np.array(cmap(cmap_input), copy=True)
@@ -610,26 +721,18 @@ def main():
             else:
                 frame_array = rgba_uint8
 
-            color_image = PIL.Image.fromarray(frame_array)
+            need_color_image = writers.requires_color_image(i, opt.frames) or writers.should_store_final_image(i, opt.frames)
+            color_image = PIL.Image.fromarray(frame_array) if need_color_image else None
 
-            if output_config.save_color_frames and output_config.frame_dir is not None:
-                frame_path = output_config.frame_dir / f"frame{i:0{frame_digits}d}.{output_config.image_format}"
-                color_image.save(str(frame_path), format=pil_format)
+            writers.write_color_outputs(i, frame_array, color_image)
 
-            if gif_writer is not None:
-                gif_writer.append_data(frame_array)
-
-            final_color_image = color_image
+            if writers.should_store_final_image(i, opt.frames):
+                final_color_image = color_image if color_image is not None else PIL.Image.fromarray(frame_array)
 
     finally:
-        if gif_writer is not None:
-            gif_writer.close()
+        writers.close()
 
-    if final_color_image is None:
-        return
-
-    if output_config.image_path is not None and "image" in output_config.modes:
-        final_color_image.save(str(output_config.image_path), format=pil_format)
+    writers.finalize(final_color_image)
 
 
 if __name__ == '__main__':
