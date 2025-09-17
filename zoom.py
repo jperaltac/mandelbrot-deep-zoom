@@ -98,6 +98,14 @@ def build_parser():
     parser.add_argument('--show-edges', help='render the edge detection beside',
                         dest='show_edges', action="store_true")
 
+    parser.add_argument('--normalize', choices=['outside', 'all'], default='outside',
+                        help='Normalization strategy: "outside" uses only escaping points; "all" uses every sample.')
+    parser.add_argument('--gamma', type=float, default=0.85, help='Gamma correction for tone mapping.')
+    parser.add_argument('--clip-low', type=float, default=0.5, help='Lower percentile for normalization clipping.')
+    parser.add_argument('--clip-high', type=float, default=99.5, help='Upper percentile for normalization clipping.')
+    parser.add_argument('--invert', action='store_true', help='Invert the selected colormap.')
+    parser.add_argument('--inside-color', type=str, default='#000000', help='Hex color for points inside the Mandelbrot set.')
+
     return parser
 
 
@@ -133,13 +141,37 @@ class mandelbrot_generator:
             self.y_width = np.float64(self.x_width * self.aspect)
 
         # choose an edge point at random to focus on
-        _, Z, edges = self.process()
+        _, _, edges = self.process()
         edge_indices = np.argwhere(edges == 1)
         zoom_center = edge_indices[np.random.choice(len(edge_indices))]
 
         # recenter to the focus point
-        self.x_center = Z[zoom_center[0], zoom_center[1]].real
-        self.y_center = Z[zoom_center[0], zoom_center[1]].imag
+        x_c, y_c = self._pixel_to_complex(zoom_center[0], zoom_center[1])
+        self.x_center = np.float64(x_c)
+        self.y_center = np.float64(y_c)
+
+    def _pixel_to_complex(self, row, col):
+        """Convert pixel indices to complex plane coordinates for the last render."""
+        if not hasattr(self, '_x_min') or not hasattr(self, '_y_min'):
+            raise RuntimeError('Sampling bounds have not been initialized.')
+        x_step = getattr(self, '_x_step', None)
+        y_step = getattr(self, '_y_step', None)
+        x_res = getattr(self, '_x_res_int', None)
+        y_res = getattr(self, '_y_res_int', None)
+        if x_step is None or y_step is None or x_res is None or y_res is None:
+            raise RuntimeError('Sampling metadata is unavailable.')
+
+        row = int(row)
+        col = int(col)
+        if x_res > 1:
+            x = self._x_min + np.float64(col) * x_step
+        else:
+            x = self._x_min
+        if y_res > 1:
+            y = self._y_min + np.float64(row) * y_step
+        else:
+            y = self._y_min
+        return np.float64(x), np.float64(y)
 
     @tf.function
     def _step(self, zs, xs, ns, active):
@@ -171,6 +203,15 @@ class mandelbrot_generator:
         x_max = self.x_center + self.x_width / 2
         y_min = self.y_center - self.y_width / 2
         y_max = self.y_center + self.y_width / 2
+
+        x_res_int = max(int(self.x_res), 1)
+        y_res_int = max(int(self.y_res), 1)
+        self._x_min = np.float64(x_min)
+        self._y_min = np.float64(y_min)
+        self._x_res_int = x_res_int
+        self._y_res_int = y_res_int
+        self._x_step = np.float64((x_max - x_min) / (x_res_int - 1)) if x_res_int > 1 else np.float64(0.0)
+        self._y_step = np.float64((y_max - y_min) / (y_res_int - 1)) if y_res_int > 1 else np.float64(0.0)
 
         with tf.device(DEVICE):
             x = tf.linspace(x_min, x_max, int(self.x_res))
@@ -204,10 +245,10 @@ class mandelbrot_generator:
             )
             edges = tf.math.logical_xor(tf.roll(mask, 1, axis=0), mask)
 
-        return smooth.numpy(), Z.numpy(), edges.numpy()
+        return smooth.numpy(), ns.numpy(), edges.numpy()
 
     def next_image(self, zoom_factor=0.9):
-        fractal, Z, edges = self.process()
+        fractal, ns, edges = self.process()
 
         # choose an edge point nearest to the center
         zoom_center = [0, 0]
@@ -221,8 +262,9 @@ class mandelbrot_generator:
                 break
 
         # recenter
-        self.x_center = Z[zoom_center[0], zoom_center[1]].real
-        self.y_center = Z[zoom_center[0], zoom_center[1]].imag
+        x_c, y_c = self._pixel_to_complex(zoom_center[0], zoom_center[1])
+        self.x_center = np.float64(x_c)
+        self.y_center = np.float64(y_c)
 
         # zoom
         self.x_width *= np.float64(zoom_factor)
@@ -230,7 +272,7 @@ class mandelbrot_generator:
             self.y_width = np.float64(self.x_width * self.aspect)
         else:
             self.y_width *= np.float64(zoom_factor)
-        return fractal, edges
+        return fractal, ns, edges
 
 
 def main():
@@ -250,6 +292,21 @@ def main():
         image_generator.y_width = np.float64(image_generator.x_width * image_generator.aspect)
     images = []
     cmap = cm.get_cmap(opt.colormap)
+
+    def _hex01(hex_color):
+        hex_color = hex_color.lstrip('#')
+        if len(hex_color) != 6:
+            raise ValueError('inside_color must be in the form #RRGGBB.')
+        try:
+            return tuple(int(hex_color[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+        except ValueError as exc:
+            raise ValueError('inside_color must contain only hexadecimal digits.') from exc
+
+    try:
+        inside_rgb = _hex01(opt.inside_color)
+    except ValueError:
+        print(f"Invalid inside_color '{opt.inside_color}', defaulting to black.")
+        inside_rgb = (0.0, 0.0, 0.0)
 
     def ease_in_out(t):
         return 3 * t ** 2 - 2 * t ** 3
@@ -283,25 +340,50 @@ def main():
     for i in range(opt.frames):
         print("frame {0} out of {1}".format(i, opt.frames), end='\r')
         zoom_factor = per_frame_factors[i] if per_frame_factors.size else opt.zoom_factor
-        fractal, edges = image_generator.next_image(zoom_factor=zoom_factor)
+        fractal, iters, edges = image_generator.next_image(zoom_factor=zoom_factor)
 
-        v = fractal.astype(np.float64, copy=False)
-        vmax = np.percentile(v, 99.5) if v.size else 1.0
-        v = np.clip(v / (vmax + 1e-9), 0.0, 1.0) ** 0.85
+        inside = (iters >= opt.max_iterations)
+        v = fractal.astype(np.float64, copy=True)
+        normalize_mode = getattr(opt, 'normalize', 'outside')
+        eps = 1e-12
+
+        if normalize_mode == 'outside':
+            selection = v[~inside]
+        else:
+            selection = v
+
+        if selection.size:
+            lo = np.percentile(selection, getattr(opt, 'clip_low', 0.5))
+            hi = np.percentile(selection, getattr(opt, 'clip_high', 99.5))
+            hi = max(hi, lo + eps)
+            v = (np.clip(v, lo, hi) - lo) / (hi - lo)
+        else:
+            v.fill(0.0)
+
+        gamma = getattr(opt, 'gamma', 0.85)
+        v = np.clip(v, 0.0, 1.0) ** gamma
 
         if opt.save_mono:
-            img = PIL.Image.fromarray(np.uint8(v * 255))
+            mono = np.uint8(np.clip(v, 0.0, 1.0) * 255)
+            img = PIL.Image.fromarray(mono)
             img.save(os.path.join(opt.frames_path, 'mono{0:03d}.{1}'.format(i, opt.format)))
 
-        rgba = np.uint8(cmap(v) * 255)
+        cmap_input = 1.0 - v if getattr(opt, 'invert', False) else v
+        rgba = np.array(cmap(cmap_input), copy=True)
+
+        for k in (0, 1, 2):
+            rgba[..., k] = np.where(inside, inside_rgb[k], rgba[..., k])
+        rgba[..., 3] = 1.0
+        rgba_uint8 = np.uint8(np.clip(rgba * 255, 0, 255))
+
         if opt.show_edges:
             edges_rgba = np.uint8(np.stack((edges,) * 4, axis=-1) * 255)
-            img = PIL.Image.fromarray(np.concatenate((rgba, edges_rgba), axis=1))
+            img = PIL.Image.fromarray(np.concatenate((rgba_uint8, edges_rgba), axis=1))
             images.append(img)
             if opt.save_frames:
                 img.save(os.path.join(opt.frames_path, 'frame{0:03d}.{1}'.format(i, opt.format)))
         else:
-            img = PIL.Image.fromarray(rgba)
+            img = PIL.Image.fromarray(rgba_uint8)
             images.append(img)
             if opt.save_frames:
                 img.save(os.path.join(opt.frames_path, 'frame{0:03d}.{1}'.format(i, opt.format)))
