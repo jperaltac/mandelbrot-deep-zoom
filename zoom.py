@@ -1,12 +1,57 @@
+import os
+import sys
+import warnings
+
+_VERBOSE_FLAGS = {"--verbose", "-v"}
+_cli_verbose = any(arg in _VERBOSE_FLAGS for arg in sys.argv[1:])
+_env_log_level = os.environ.get("TF_CPP_MIN_LOG_LEVEL")
+_suppress_messages = (not _cli_verbose) and _env_log_level != "0"
+
+if _suppress_messages and _env_log_level is None:
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
+if _suppress_messages:
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Protobuf gencode version .* is exactly one major version older than the runtime version .*",
+        category=UserWarning,
+        module="google.protobuf",
+    )
+
+VERBOSE = _cli_verbose
+
+
+def log(message, *args, **kwargs):
+    if VERBOSE:
+        print(message, *args, **kwargs)
+
+
 # Import libraries for simulation
 import tensorflow as tf
 import numpy as np
 
+if _suppress_messages:
+    try:
+        tf.get_logger().setLevel("ERROR")
+        for handler in tf.get_logger().handlers:
+            handler.setLevel("ERROR")
+    except Exception:
+        pass
+
 # Imports for visualization
 import PIL.Image
-from matplotlib import cm  # make sure matplotlib 3.0+ is installed
 
-print("TensorFlow version:", tf.__version__)
+try:
+    from matplotlib import colormaps as _mpl_colormaps
+except ImportError:  # Matplotlib < 3.5
+    from matplotlib import cm as _mpl_colormaps  # type: ignore
+
+
+def get_colormap(name):
+    return _mpl_colormaps.get_cmap(name)
+
+
+log("TensorFlow version: %s" % tf.__version__)
 
 # Configure TensorFlow to use the GPU when available. This also allows the code
 # to run on systems without a GPU, such as the execution environment used for
@@ -18,13 +63,14 @@ if gpus:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
         DEVICE = '/GPU:0'
-        print("GPU found, using", gpus[0].name)
+        log("GPU found, using %s" % gpus[0].name)
     except RuntimeError as e:
-        print(e)
+        if VERBOSE:
+            print(e)
         DEVICE = '/CPU:0'
 else:
     DEVICE = '/CPU:0'
-    print("No GPU found, using CPU")
+    log("No GPU found, using CPU")
 
 from argparse import ArgumentParser
 
@@ -105,6 +151,8 @@ def build_parser():
     parser.add_argument('--clip-high', type=float, default=99.5, help='Upper percentile for normalization clipping.')
     parser.add_argument('--invert', action='store_true', help='Invert the selected colormap.')
     parser.add_argument('--inside-color', type=str, default='#000000', help='Hex color for points inside the Mandelbrot set.')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='Enable verbose logging, including TensorFlow and hardware diagnostics.')
 
     return parser
 
@@ -279,6 +327,9 @@ def main():
     parser = build_parser()
     opt = parser.parse_args()
 
+    global VERBOSE
+    VERBOSE = bool(opt.verbose)
+
     image_generator = mandelbrot_generator(opt.x_res,
                                            opt.y_res,
                                            opt.x_center,
@@ -291,7 +342,7 @@ def main():
     if opt.lock_aspect:
         image_generator.y_width = np.float64(image_generator.x_width * image_generator.aspect)
     images = []
-    cmap = cm.get_cmap(opt.colormap)
+    cmap = get_colormap(opt.colormap)
 
     def _hex01(hex_color):
         hex_color = hex_color.lstrip('#')
