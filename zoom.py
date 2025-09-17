@@ -60,9 +60,18 @@ def build_parser():
                         dest='y_width', help='starting height of the sample window in the complex plane',
                         metavar='Y_WIDTH', default=2.5)
 
+    parser.add_argument('--lock-aspect', action='store_true',
+                        help='Maintains y_width = x_width * (y_res/x_res) to avoid stretching when zooming.')
+
     parser.add_argument('--zoom-factor', type=float,
                         dest='zoom_factor', help='the factor by which to multiply the window size each frame. Choose < 1 for zoom in, >1 for zoom out',
                         metavar='ZOOM_FACTOR', default=0.8)
+
+    parser.add_argument('--final-zoom', type=float, default=None,
+                        help='Overall scale applied by the last frame (e.g., 1e-4 narrows the window by 10000×). If set, overrides --zoom-factor.')
+
+    parser.add_argument('--easing', type=str, default='ease',
+                        help='Temporal curve used for variable zoom: "linear" or "ease" for smooth ease-in-out.')
 
     parser.add_argument('--frames', type=int,
                         dest='frames', help='number of frames to generate',
@@ -117,6 +126,12 @@ class mandelbrot_generator:
         self.y_width = np.float64(y_width)
         self.max_n = int(max_n)
 
+        # Aspect locking support
+        self.lock_aspect = getattr(self, 'lock_aspect', False)
+        self.aspect = np.float64(self.y_res / self.x_res) if self.x_res != 0 else np.float64(1.0)
+        if self.lock_aspect:
+            self.y_width = np.float64(self.x_width * self.aspect)
+
         # choose an edge point at random to focus on
         _, Z, edges = self.process()
         edge_indices = np.argwhere(edges == 1)
@@ -127,28 +142,29 @@ class mandelbrot_generator:
         self.y_center = Z[zoom_center[0], zoom_center[1]].imag
 
     @tf.function
-    def _step(self, zs, xs, ns):
-        """Perform a single Mandelbrot iteration."""
-        zs = zs * zs + xs
+    def _step(self, zs, xs, ns, active):
+        """Perform a single Mandelbrot iteration for points that have not yet diverged."""
+        zs_new = zs * zs + xs
+        zs = tf.where(active, zs_new, zs)
+        ns = ns + tf.cast(active, tf.int32)
         az = tf.abs(zs)
-        not_diverged = az < HORIZON
-        ns = ns + tf.cast(not_diverged, tf.int32)
-        return zs, ns, not_diverged
+        new_active = tf.logical_and(active, az < HORIZON)
+        return zs, ns, new_active
 
     @tf.function
     def _run(self, xs, zs, ns):
         """Iterate the Mandelbrot formula using a TensorFlow while loop."""
         i = tf.constant(0, dtype=tf.int32)
-        not_diverged = tf.ones_like(ns, tf.bool)
+        active = tf.ones_like(ns, tf.bool)
 
-        def cond(i, zs, ns, not_diverged):
-            return tf.less(i, self.max_n)
+        def cond(i, zs, ns, active):
+            return tf.logical_and(tf.less(i, self.max_n), tf.reduce_any(active))
 
-        def body(i, zs, ns, not_diverged):
-            zs, ns, not_diverged = self._step(zs, xs, ns)
-            return i + 1, zs, ns, not_diverged
+        def body(i, zs, ns, active):
+            zs, ns, active = self._step(zs, xs, ns, active)
+            return i + 1, zs, ns, active
 
-        return tf.while_loop(cond, body, [i, zs, ns, not_diverged])
+        return tf.while_loop(cond, body, [i, zs, ns, active])
 
     def process(self):
         x_min = self.x_center - self.x_width / 2
@@ -165,12 +181,30 @@ class mandelbrot_generator:
             zs = tf.identity(xs)
             ns = tf.zeros_like(xs, tf.int32)
 
-            iterations, zs, ns, not_diverged = self._run(xs, zs, ns)
-            iter_matrix = tf.fill(tf.shape(ns), iterations)
-            mask = tf.cast(tf.clip_by_value(iter_matrix - ns, 0, 1), tf.bool)
+            _, zs, ns, _ = self._run(xs, zs, ns)
+
+            az = tf.abs(zs)
+            eps = tf.constant(1e-12, dtype=az.dtype)
+            az_safe = tf.maximum(az, tf.constant(1.0, dtype=az.dtype) + eps)
+            log_az = tf.math.log(az_safe)
+            log_log_az = tf.math.log(tf.maximum(log_az, eps))
+            ns_float = tf.cast(ns, tf.float64)
+            log2 = tf.math.log(tf.constant(2.0, dtype=az.dtype))
+            smooth_escape = ns_float + tf.constant(1.0, dtype=ns_float.dtype) - log_log_az / log2
+            escaped = tf.less(ns, self.max_n)
+            smooth = tf.where(escaped, smooth_escape, tf.cast(self.max_n, tf.float64))
+
+            mask = tf.cast(
+                tf.clip_by_value(
+                    tf.fill(tf.shape(ns), tf.cast(self.max_n, ns.dtype)) - ns,
+                    0,
+                    1,
+                ),
+                tf.bool,
+            )
             edges = tf.math.logical_xor(tf.roll(mask, 1, axis=0), mask)
 
-        return (iter_matrix - ns).numpy(), Z.numpy(), edges.numpy()
+        return smooth.numpy(), Z.numpy(), edges.numpy()
 
     def next_image(self, zoom_factor=0.9):
         fractal, Z, edges = self.process()
@@ -192,7 +226,10 @@ class mandelbrot_generator:
 
         # zoom
         self.x_width *= np.float64(zoom_factor)
-        self.y_width *= np.float64(zoom_factor)
+        if getattr(self, 'lock_aspect', False):
+            self.y_width = np.float64(self.x_width * self.aspect)
+        else:
+            self.y_width *= np.float64(zoom_factor)
         return fractal, edges
 
 
@@ -207,8 +244,34 @@ def main():
                                            opt.y_center,
                                            opt.y_width,
                                            opt.max_iterations)
+    image_generator.lock_aspect = opt.lock_aspect
+    image_generator.aspect = np.float64(image_generator.y_res / image_generator.x_res) if image_generator.x_res != 0 else np.float64(1.0)
+    if opt.lock_aspect:
+        image_generator.y_width = np.float64(image_generator.x_width * image_generator.aspect)
     images = []
     cmap = cm.get_cmap(opt.colormap)
+
+    def ease_in_out(t):
+        return 3 * t ** 2 - 2 * t ** 3
+
+    if opt.final_zoom is not None and opt.final_zoom > 0:
+        total_frames = max(1, opt.frames)
+        logZ = np.log(opt.final_zoom)
+        easing_mode = opt.easing.lower()
+        ease = (lambda u: u) if easing_mode == 'linear' else ease_in_out
+        if total_frames == 1:
+            alphas = np.array([1.0], dtype=np.float64)
+        else:
+            alphas = np.array([ease(i / (total_frames - 1)) for i in range(total_frames)], dtype=np.float64)
+        alphas = np.clip(alphas, 0.0, 1.0)
+        inc = np.diff(np.concatenate(([0.0], alphas)))
+        per_frame_logs = inc * logZ
+        if opt.frames < total_frames:
+            per_frame_logs = per_frame_logs[:opt.frames]
+    else:
+        per_frame_logs = np.full(opt.frames, np.log(opt.zoom_factor), dtype=np.float64) if opt.frames > 0 else np.array([], dtype=np.float64)
+
+    per_frame_factors = np.exp(per_frame_logs) if per_frame_logs.size else np.array([], dtype=np.float64)
 
     if opt.save_frames or opt.save_mono:
         import os
@@ -219,22 +282,26 @@ def main():
 
     for i in range(opt.frames):
         print("frame {0} out of {1}".format(i, opt.frames), end='\r')
-        fractal, edges = image_generator.next_image(zoom_factor=opt.zoom_factor)
+        zoom_factor = per_frame_factors[i] if per_frame_factors.size else opt.zoom_factor
+        fractal, edges = image_generator.next_image(zoom_factor=zoom_factor)
+
+        v = fractal.astype(np.float64, copy=False)
+        vmax = np.percentile(v, 99.5) if v.size else 1.0
+        v = np.clip(v / (vmax + 1e-9), 0.0, 1.0) ** 0.85
 
         if opt.save_mono:
-            img = PIL.Image.fromarray(
-                np.uint8(255 * (np.abs((fractal % 512) - 255) / 256)))
+            img = PIL.Image.fromarray(np.uint8(v * 255))
             img.save(os.path.join(opt.frames_path, 'mono{0:03d}.{1}'.format(i, opt.format)))
 
-        fractal = np.uint8(cmap(fractal % 512) * 255)
+        rgba = np.uint8(cmap(v) * 255)
         if opt.show_edges:
-            edges = np.uint8(np.stack((edges,)*4, axis=-1)*255)
-            img = PIL.Image.fromarray(np.concatenate((fractal, edges), axis=1))
+            edges_rgba = np.uint8(np.stack((edges,) * 4, axis=-1) * 255)
+            img = PIL.Image.fromarray(np.concatenate((rgba, edges_rgba), axis=1))
             images.append(img)
             if opt.save_frames:
                 img.save(os.path.join(opt.frames_path, 'frame{0:03d}.{1}'.format(i, opt.format)))
         else:
-            img = PIL.Image.fromarray(fractal)
+            img = PIL.Image.fromarray(rgba)
             images.append(img)
             if opt.save_frames:
                 img.save(os.path.join(opt.frames_path, 'frame{0:03d}.{1}'.format(i, opt.format)))
