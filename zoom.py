@@ -43,10 +43,13 @@ if _suppress_messages:
 
 # Imports for visualization
 import PIL.Image
+import PIL.ImageDraw
+import PIL.ImageFont
 import imageio
 
 from mandelbrot import (
     RenderParameters,
+    SamplingMetadata,
     ZoomPlanner,
     compute_zoom_factors,
     render_frame,
@@ -178,6 +181,8 @@ def build_parser():
 
     parser.add_argument('--show-edges', help='render the edge detection beside',
                         dest='show_edges', action="store_true")
+    parser.add_argument('--show-coordinates', help='overlay axis bounds and origin marker on the final image',
+                        dest='show_coordinates', action='store_true')
 
     parser.add_argument('--normalize', choices=['outside', 'all'], default='outside',
                         help='Normalization strategy: "outside" uses only escaping points; "all" uses every sample.')
@@ -362,6 +367,88 @@ def write_gif(writer: Any, frame_array: np.ndarray) -> None:
     writer.append_data(frame_array)
 
 
+def annotate_with_coordinates(
+    image: PIL.Image.Image,
+    metadata: SamplingMetadata,
+    params: RenderParameters,
+) -> PIL.Image.Image:
+    """Overlay axis ranges and the complex origin on ``image``."""
+
+    if image.mode != "RGBA":
+        image = image.convert("RGBA")
+
+    draw = PIL.ImageDraw.Draw(image, "RGBA")
+    font = PIL.ImageFont.load_default()
+
+    x_max = metadata.x_min + metadata.x_step * max(metadata.x_res - 1, 0)
+    y_max = metadata.y_min + metadata.y_step * max(metadata.y_res - 1, 0)
+
+    lines = [
+        f"X: [{metadata.x_min:.6g}, {x_max:.6g}]",
+        f"Y: [{metadata.y_min:.6g}, {y_max:.6g}]",
+        f"Centro: ({params.x_center:.6g}, {params.y_center:.6g})",
+    ]
+
+    padding = 8
+    line_spacing = 4
+    text_width = 0
+    line_heights: list[int] = []
+
+    bbox_fn = getattr(draw, "textbbox", None)
+    for line in lines:
+        if bbox_fn is not None:
+            bbox = bbox_fn((0, 0), line, font=font)
+            width = int(round(bbox[2] - bbox[0]))
+            height = int(round(bbox[3] - bbox[1]))
+        else:
+            width, height = draw.textsize(line, font=font)
+        text_width = max(text_width, width)
+        line_heights.append(height)
+
+    total_text_height = sum(line_heights)
+    if lines:
+        total_text_height += line_spacing * (len(lines) - 1)
+
+    box_width = text_width + padding * 2
+    box_height = total_text_height + padding * 2
+    box_left = 12
+    box_top = 12
+    box_right = box_left + box_width
+    box_bottom = box_top + box_height
+
+    draw.rectangle(
+        [(box_left, box_top), (box_right, box_bottom)],
+        fill=(0, 0, 0, 180),
+    )
+
+    text_y = box_top + padding
+    for idx, (line, height) in enumerate(zip(lines, line_heights)):
+        draw.text((box_left + padding, text_y), line, font=font, fill=(255, 255, 255, 255))
+        increment = height + (line_spacing if idx < len(lines) - 1 else 0)
+        text_y += increment
+
+    x_bounds = (metadata.x_min, x_max)
+    y_bounds = (metadata.y_min, y_max)
+    zero_in_x = min(x_bounds) <= 0.0 <= max(x_bounds)
+    zero_in_y = min(y_bounds) <= 0.0 <= max(y_bounds)
+
+    if zero_in_x and zero_in_y and metadata.x_res > 0 and metadata.y_res > 0:
+        if metadata.x_step != 0.0 and metadata.y_step != 0.0:
+            origin_col = int(round((0.0 - metadata.x_min) / metadata.x_step))
+            origin_row = int(round((0.0 - metadata.y_min) / metadata.y_step))
+            if 0 <= origin_col < metadata.x_res and 0 <= origin_row < metadata.y_res:
+                radius = max(3, int(round(min(metadata.x_res, metadata.y_res) * 0.005)))
+                draw.ellipse(
+                    [
+                        (origin_col - radius, origin_row - radius),
+                        (origin_col + radius, origin_row + radius),
+                    ],
+                    fill=(255, 255, 255, 255),
+                )
+
+    return image
+
+
 @dataclass
 class OutputWriters:
     config: OutputConfig
@@ -503,12 +590,15 @@ def main():
     )
 
     final_color_image: PIL.Image.Image | None = None
+    final_metadata: SamplingMetadata | None = None
+    final_params: RenderParameters | None = None
 
     try:
         for i in range(opt.frames):
             print("frame {0} out of {1}".format(i, opt.frames), end='\r')
             zoom_factor = per_frame_factors[i] if per_frame_factors.size else opt.zoom_factor
-            result = render_frame(params, device=DEVICE)
+            frame_params = params
+            result = render_frame(frame_params, device=DEVICE)
             next_params = (
                 planner.update_after_frame(params, result, zoom_factor)
                 if i < opt.frames - 1
@@ -574,11 +664,21 @@ def main():
 
             if writers.should_store_final_image(i, opt.frames):
                 final_color_image = color_image if color_image is not None else PIL.Image.fromarray(frame_array)
+                final_metadata = result.metadata
+                final_params = frame_params
 
             params = next_params
 
     finally:
         writers.close()
+
+    if (
+        final_color_image is not None
+        and getattr(opt, "show_coordinates", False)
+        and final_metadata is not None
+        and final_params is not None
+    ):
+        final_color_image = annotate_with_coordinates(final_color_image, final_metadata, final_params)
 
     writers.finalize(final_color_image)
 
