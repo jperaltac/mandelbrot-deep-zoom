@@ -458,15 +458,28 @@ class mandelbrot_generator:
         if self.lock_aspect:
             self.y_width = np.float64(self.x_width * self.aspect)
 
-        # choose an edge point at random to focus on
+        # choose a deterministic edge point to focus on so repeated runs are reproducible
         _, _, edges = self.process()
         edge_indices = np.argwhere(edges == 1)
-        zoom_center = edge_indices[np.random.choice(len(edge_indices))]
+        zoom_center = self._select_zoom_center(edge_indices, edges.shape)
 
         # recenter to the focus point
         x_c, y_c = self._pixel_to_complex(zoom_center[0], zoom_center[1])
         self.x_center = np.float64(x_c)
         self.y_center = np.float64(y_c)
+
+    @staticmethod
+    def _select_zoom_center(edge_indices: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+        """Pick a deterministic focus point near the image center."""
+
+        if edge_indices.size == 0:
+            return np.array([shape[0] // 2, shape[1] // 2], dtype=np.int64)
+
+        center = np.array([(shape[0] - 1) / 2.0, (shape[1] - 1) / 2.0], dtype=np.float64)
+        indices = edge_indices.astype(np.float64, copy=False)
+        distances = np.sum((indices - center) ** 2, axis=1)
+        best_idx = int(np.argmin(distances))
+        return edge_indices[best_idx]
 
     def _pixel_to_complex(self, row, col):
         """Convert pixel indices to complex plane coordinates for the last render."""
@@ -576,7 +589,7 @@ class mandelbrot_generator:
                  mask.shape[1]//2-i:mask.shape[1]//2+i] = 1
             edge_indices = np.argwhere(np.multiply(edges, mask) == 1)
             if edge_indices.size != 0:
-                zoom_center = edge_indices[np.random.choice(len(edge_indices))]
+                zoom_center = self._select_zoom_center(edge_indices, edges.shape)
                 break
 
         # recenter
