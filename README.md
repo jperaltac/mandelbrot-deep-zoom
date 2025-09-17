@@ -50,6 +50,11 @@ CUDA_VISIBLE_DEVICES=0 python zoom.py --frames 300 --zoom-factor 0.9
 
 The script saves an animated `movie.gif`. Use `--save-frames` to also write individual images to disk.
 
+## Output strategy redesign
+
+See [`docs/output-modes.md`](docs/output-modes.md) for a detailed review (in Spanish) of the current GIF/frame generation flow and
+the proposed CLI redesign to support explicit output modes.
+
 ## Command-line Flags
 
 - `--max-iterations`   Maximum iterations per pixel. Default: `2000`
