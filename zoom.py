@@ -446,6 +446,93 @@ def annotate_with_coordinates(
                     fill=(255, 255, 255, 255),
                 )
 
+    region_width = min(image.width, metadata.x_res) if metadata.x_res > 0 else image.width
+    region_height = min(image.height, metadata.y_res) if metadata.y_res > 0 else image.height
+
+    if region_width > 0 and region_height > 0:
+        label_margin = 10
+        label_padding = 4
+        label_spacing = 2
+
+        multiline_bbox = getattr(draw, "multiline_textbbox", None)
+        multiline_size = getattr(draw, "multiline_textsize", None)
+
+        def measure(text: str) -> tuple[int, int]:
+            if multiline_bbox is not None:
+                bbox = multiline_bbox((0, 0), text, font=font, spacing=label_spacing)
+                width = int(round(bbox[2] - bbox[0]))
+                height = int(round(bbox[3] - bbox[1]))
+            elif multiline_size is not None:
+                width, height = multiline_size(text, font=font, spacing=label_spacing)
+            else:
+                width, height = draw.textsize(text, font=font)
+            return width, height
+
+        def clamp(value: float, low: float, high: float) -> float:
+            return max(low, min(value, high))
+
+        top_label_y = max(label_margin, box_bottom + label_margin)
+
+        def compute_y(height: int, align: str) -> int:
+            if align == "top":
+                y = top_label_y
+            elif align == "bottom":
+                y = region_height - height - label_margin
+            else:
+                y = (region_height - height) / 2.0
+            max_y = region_height - height - label_margin
+            if max_y < label_margin:
+                return int(round(clamp(y, 0, max(region_height - height, 0))))
+            return int(round(clamp(y, label_margin, max_y)))
+
+        def compute_x(width: int, align: str) -> int:
+            if align == "left":
+                x = label_margin
+            elif align == "right":
+                x = region_width - width - label_margin
+            else:
+                x = (region_width - width) / 2.0
+            max_x = region_width - width - label_margin
+            if max_x < label_margin:
+                return int(round(clamp(x, 0, max(region_width - width, 0))))
+            return int(round(clamp(x, label_margin, max_x)))
+
+        def format_coord(x: float, y: float) -> str:
+            return f"x={x:.6g}\ny={y:.6g}"
+
+        label_definitions: list[tuple[float, float, str, str]] = [
+            (metadata.x_min, metadata.y_min, "left", "top"),
+            (params.x_center, metadata.y_min, "center", "top"),
+            (x_max, metadata.y_min, "right", "top"),
+            (metadata.x_min, params.y_center, "left", "middle"),
+            (params.x_center, params.y_center, "center", "middle"),
+            (x_max, params.y_center, "right", "middle"),
+            (metadata.x_min, y_max, "left", "bottom"),
+            (params.x_center, y_max, "center", "bottom"),
+            (x_max, y_max, "right", "bottom"),
+        ]
+
+        for x_value, y_value, align_x, align_y in label_definitions:
+            text = format_coord(x_value, y_value)
+            text_width, text_height = measure(text)
+            x = compute_x(text_width, align_x)
+            y = compute_y(text_height, align_y)
+            rect_coords = [
+                (x - label_padding, y - label_padding),
+                (x + text_width + label_padding, y + text_height + label_padding),
+            ]
+            draw.rectangle(rect_coords, fill=(0, 0, 0, 150))
+            if multiline_bbox is not None or multiline_size is not None:
+                draw.multiline_text(
+                    (x, y),
+                    text,
+                    font=font,
+                    fill=(255, 255, 255, 255),
+                    spacing=label_spacing,
+                )
+            else:
+                draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
+
     return image
 
 
