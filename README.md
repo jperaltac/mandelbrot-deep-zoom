@@ -72,6 +72,7 @@ the proposed CLI redesign to support explicit output modes.
 - `--format`           File format for saved frames (e.g. `png`, `jpeg`). Default: `png`
 - `--frames-path`      Directory to store individual frames. Default: `./frames`
 - `--show-edges`       Render edge detection alongside the Mandelbrot zoom
+- `--show-coordinates` Overlay the final frame with axis bounds and highlight the complex origin
 
 ## How does it know where to zoom?
 
