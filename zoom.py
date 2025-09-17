@@ -45,6 +45,13 @@ if _suppress_messages:
 import PIL.Image
 import imageio
 
+from mandelbrot import (
+    RenderParameters,
+    ZoomPlanner,
+    compute_zoom_factors,
+    render_frame,
+)
+
 try:
     from matplotlib import colormaps as _mpl_colormaps
 except ImportError:  # Matplotlib < 3.5
@@ -427,183 +434,6 @@ class OutputWriters:
             self._gif_writer = None
 
 
-HORIZON = 4
-#LOG_HORIZON = np.log(np.log(HORIZON))/np.log(2)
-
-
-class mandelbrot_generator:
-    def __init__(self,
-                x_res=512,
-                y_res=512,
-                x_center=-0.75,
-                x_width=2.5,
-                y_center=0,
-                y_width=2.5,
-                max_n=2000):
-
-        # Use float64 so that the values can be transferred to the GPU. The
-        # previous implementation relied on float128 which is not supported by
-        # most accelerators.
-        self.x_res = np.float64(x_res)
-        self.y_res = np.float64(y_res)
-        self.x_center = np.float64(x_center)
-        self.x_width = np.float64(x_width)
-        self.y_center = np.float64(y_center)
-        self.y_width = np.float64(y_width)
-        self.max_n = int(max_n)
-
-        # Aspect locking support
-        self.lock_aspect = getattr(self, 'lock_aspect', False)
-        self.aspect = np.float64(self.y_res / self.x_res) if self.x_res != 0 else np.float64(1.0)
-        if self.lock_aspect:
-            self.y_width = np.float64(self.x_width * self.aspect)
-
-        # choose a deterministic edge point to focus on so repeated runs are reproducible
-        _, _, edges = self.process()
-        edge_indices = np.argwhere(edges == 1)
-        zoom_center = self._select_zoom_center(edge_indices, edges.shape)
-
-        # recenter to the focus point
-        x_c, y_c = self._pixel_to_complex(zoom_center[0], zoom_center[1])
-        self.x_center = np.float64(x_c)
-        self.y_center = np.float64(y_c)
-
-    @staticmethod
-    def _select_zoom_center(edge_indices: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
-        """Pick a deterministic focus point near the image center."""
-
-        if edge_indices.size == 0:
-            return np.array([shape[0] // 2, shape[1] // 2], dtype=np.int64)
-
-        center = np.array([(shape[0] - 1) / 2.0, (shape[1] - 1) / 2.0], dtype=np.float64)
-        indices = edge_indices.astype(np.float64, copy=False)
-        distances = np.sum((indices - center) ** 2, axis=1)
-        best_idx = int(np.argmin(distances))
-        return edge_indices[best_idx]
-
-    def _pixel_to_complex(self, row, col):
-        """Convert pixel indices to complex plane coordinates for the last render."""
-        if not hasattr(self, '_x_min') or not hasattr(self, '_y_min'):
-            raise RuntimeError('Sampling bounds have not been initialized.')
-        x_step = getattr(self, '_x_step', None)
-        y_step = getattr(self, '_y_step', None)
-        x_res = getattr(self, '_x_res_int', None)
-        y_res = getattr(self, '_y_res_int', None)
-        if x_step is None or y_step is None or x_res is None or y_res is None:
-            raise RuntimeError('Sampling metadata is unavailable.')
-
-        row = int(row)
-        col = int(col)
-        if x_res > 1:
-            x = self._x_min + np.float64(col) * x_step
-        else:
-            x = self._x_min
-        if y_res > 1:
-            y = self._y_min + np.float64(row) * y_step
-        else:
-            y = self._y_min
-        return np.float64(x), np.float64(y)
-
-    @tf.function
-    def _step(self, zs, xs, ns, active):
-        """Perform a single Mandelbrot iteration for points that have not yet diverged."""
-        zs_new = zs * zs + xs
-        zs = tf.where(active, zs_new, zs)
-        ns = ns + tf.cast(active, tf.int32)
-        az = tf.abs(zs)
-        new_active = tf.logical_and(active, az < HORIZON)
-        return zs, ns, new_active
-
-    @tf.function
-    def _run(self, xs, zs, ns):
-        """Iterate the Mandelbrot formula using a TensorFlow while loop."""
-        i = tf.constant(0, dtype=tf.int32)
-        active = tf.ones_like(ns, tf.bool)
-
-        def cond(i, zs, ns, active):
-            return tf.logical_and(tf.less(i, self.max_n), tf.reduce_any(active))
-
-        def body(i, zs, ns, active):
-            zs, ns, active = self._step(zs, xs, ns, active)
-            return i + 1, zs, ns, active
-
-        return tf.while_loop(cond, body, [i, zs, ns, active])
-
-    def process(self):
-        x_min = self.x_center - self.x_width / 2
-        x_max = self.x_center + self.x_width / 2
-        y_min = self.y_center - self.y_width / 2
-        y_max = self.y_center + self.y_width / 2
-
-        x_res_int = max(int(self.x_res), 1)
-        y_res_int = max(int(self.y_res), 1)
-        self._x_min = np.float64(x_min)
-        self._y_min = np.float64(y_min)
-        self._x_res_int = x_res_int
-        self._y_res_int = y_res_int
-        self._x_step = np.float64((x_max - x_min) / (x_res_int - 1)) if x_res_int > 1 else np.float64(0.0)
-        self._y_step = np.float64((y_max - y_min) / (y_res_int - 1)) if y_res_int > 1 else np.float64(0.0)
-
-        with tf.device(DEVICE):
-            x = tf.linspace(x_min, x_max, int(self.x_res))
-            y = tf.linspace(y_min, y_max, int(self.y_res))
-            X, Y = tf.meshgrid(x, y)
-            Z = tf.complex(X, Y)
-            xs = tf.identity(Z)
-            zs = tf.identity(xs)
-            ns = tf.zeros_like(xs, tf.int32)
-
-            _, zs, ns, _ = self._run(xs, zs, ns)
-
-            az = tf.abs(zs)
-            eps = tf.constant(1e-12, dtype=az.dtype)
-            az_safe = tf.maximum(az, tf.constant(1.0, dtype=az.dtype) + eps)
-            log_az = tf.math.log(az_safe)
-            log_log_az = tf.math.log(tf.maximum(log_az, eps))
-            ns_float = tf.cast(ns, tf.float64)
-            log2 = tf.math.log(tf.constant(2.0, dtype=az.dtype))
-            smooth_escape = ns_float + tf.constant(1.0, dtype=ns_float.dtype) - log_log_az / log2
-            escaped = tf.less(ns, self.max_n)
-            smooth = tf.where(escaped, smooth_escape, tf.cast(self.max_n, tf.float64))
-
-            mask = tf.cast(
-                tf.clip_by_value(
-                    tf.fill(tf.shape(ns), tf.cast(self.max_n, ns.dtype)) - ns,
-                    0,
-                    1,
-                ),
-                tf.bool,
-            )
-            edges = tf.math.logical_xor(tf.roll(mask, 1, axis=0), mask)
-
-        return smooth.numpy(), ns.numpy(), edges.numpy()
-
-    def next_image(self, zoom_factor=0.9):
-        fractal, ns, edges = self.process()
-
-        # choose an edge point nearest to the center
-        zoom_center = [0, 0]
-        for i in range(min(edges.shape[0], edges.shape[1]) // 2):
-            mask = np.zeros_like(edges)
-            mask[mask.shape[0]//2-i:mask.shape[0]//2+i,
-                 mask.shape[1]//2-i:mask.shape[1]//2+i] = 1
-            edge_indices = np.argwhere(np.multiply(edges, mask) == 1)
-            if edge_indices.size != 0:
-                zoom_center = self._select_zoom_center(edge_indices, edges.shape)
-                break
-
-        # recenter
-        x_c, y_c = self._pixel_to_complex(zoom_center[0], zoom_center[1])
-        self.x_center = np.float64(x_c)
-        self.y_center = np.float64(y_c)
-
-        # zoom
-        self.x_width *= np.float64(zoom_factor)
-        if getattr(self, 'lock_aspect', False):
-            self.y_width = np.float64(self.x_width * self.aspect)
-        else:
-            self.y_width *= np.float64(zoom_factor)
-        return fractal, ns, edges
 
 
 def main():
@@ -615,17 +445,24 @@ def main():
     global VERBOSE
     VERBOSE = bool(opt.verbose)
 
-    image_generator = mandelbrot_generator(opt.x_res,
-                                           opt.y_res,
-                                           opt.x_center,
-                                           opt.x_width,
-                                           opt.y_center,
-                                           opt.y_width,
-                                           opt.max_iterations)
-    image_generator.lock_aspect = opt.lock_aspect
-    image_generator.aspect = np.float64(image_generator.y_res / image_generator.x_res) if image_generator.x_res != 0 else np.float64(1.0)
-    if opt.lock_aspect:
-        image_generator.y_width = np.float64(image_generator.x_width * image_generator.aspect)
+    initial_params = RenderParameters(
+        x_res=opt.x_res,
+        y_res=opt.y_res,
+        x_center=opt.x_center,
+        y_center=opt.y_center,
+        x_width=opt.x_width,
+        y_width=opt.y_width,
+        max_iterations=opt.max_iterations,
+    )
+
+    aspect = np.float64(opt.y_res / opt.x_res) if opt.x_res != 0 else np.float64(1.0)
+    planner = ZoomPlanner(lock_aspect=bool(opt.lock_aspect), aspect=float(aspect))
+    params = planner.enforce_aspect(initial_params)
+
+    if opt.frames > 0:
+        focus_result = render_frame(params, device=DEVICE)
+        params = planner.initialize_focus(params, focus_result)
+
     cmap = get_colormap(opt.colormap)
 
     if output_config.frame_dir is not None:
@@ -650,27 +487,12 @@ def main():
         print(f"Invalid inside_color '{opt.inside_color}', defaulting to black.")
         inside_rgb = (0.0, 0.0, 0.0)
 
-    def ease_in_out(t):
-        return 3 * t ** 2 - 2 * t ** 3
-
-    if opt.final_zoom is not None and opt.final_zoom > 0:
-        total_frames = max(1, opt.frames)
-        logZ = np.log(opt.final_zoom)
-        easing_mode = opt.easing.lower()
-        ease = (lambda u: u) if easing_mode == 'linear' else ease_in_out
-        if total_frames == 1:
-            alphas = np.array([1.0], dtype=np.float64)
-        else:
-            alphas = np.array([ease(i / (total_frames - 1)) for i in range(total_frames)], dtype=np.float64)
-        alphas = np.clip(alphas, 0.0, 1.0)
-        inc = np.diff(np.concatenate(([0.0], alphas)))
-        per_frame_logs = inc * logZ
-        if opt.frames < total_frames:
-            per_frame_logs = per_frame_logs[:opt.frames]
-    else:
-        per_frame_logs = np.full(opt.frames, np.log(opt.zoom_factor), dtype=np.float64) if opt.frames > 0 else np.array([], dtype=np.float64)
-
-    per_frame_factors = np.exp(per_frame_logs) if per_frame_logs.size else np.array([], dtype=np.float64)
+    per_frame_factors = compute_zoom_factors(
+        opt.frames,
+        opt.zoom_factor,
+        final_zoom=opt.final_zoom,
+        easing=opt.easing,
+    )
 
     frame_digits = max(3, len(str(max(opt.frames - 1, 0))))
     writers = OutputWriters(
@@ -686,12 +508,22 @@ def main():
         for i in range(opt.frames):
             print("frame {0} out of {1}".format(i, opt.frames), end='\r')
             zoom_factor = per_frame_factors[i] if per_frame_factors.size else opt.zoom_factor
-            fractal, iters, edges = image_generator.next_image(zoom_factor=zoom_factor)
+            result = render_frame(params, device=DEVICE)
+            next_params = (
+                planner.update_after_frame(params, result, zoom_factor)
+                if i < opt.frames - 1
+                else params
+            )
+
+            fractal = result.smooth
+            iters = result.iterations
+            edges = result.edges
 
             needs_color_array = writers.requires_color_array(i, opt.frames)
             needs_mono = writers.requires_mono_image()
 
             if not (needs_color_array or needs_mono):
+                params = next_params
                 continue
 
             inside = (iters >= opt.max_iterations)
@@ -718,6 +550,7 @@ def main():
                 writers.write_mono_output(i, mono_img)
 
             if not needs_color_array:
+                params = next_params
                 continue
 
             cmap_input = 1.0 - v if getattr(opt, 'invert', False) else v
@@ -741,6 +574,8 @@ def main():
 
             if writers.should_store_final_image(i, opt.frames):
                 final_color_image = color_image if color_image is not None else PIL.Image.fromarray(frame_array)
+
+            params = next_params
 
     finally:
         writers.close()
