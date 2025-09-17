@@ -1,6 +1,8 @@
 import os
 import sys
 import warnings
+from dataclasses import dataclass
+from pathlib import Path
 
 _VERBOSE_FLAGS = {"--verbose", "-v"}
 _cli_verbose = any(arg in _VERBOSE_FLAGS for arg in sys.argv[1:])
@@ -40,6 +42,7 @@ if _suppress_messages:
 
 # Imports for visualization
 import PIL.Image
+import imageio
 
 try:
     from matplotlib import colormaps as _mpl_colormaps
@@ -73,6 +76,18 @@ else:
     log("No GPU found, using CPU")
 
 from argparse import ArgumentParser
+
+
+@dataclass
+class OutputConfig:
+    modes: tuple[str, ...]
+    gif_path: Path | None
+    image_path: Path | None
+    frame_dir: Path | None
+    save_color_frames: bool
+    save_mono_frames: bool
+    keep_frames: bool
+    image_format: str
 
 
 def build_parser():
@@ -123,23 +138,35 @@ def build_parser():
                         dest='frames', help='number of frames to generate',
                         metavar='FRAMES', default=100)
 
-    parser.add_argument('--save-frames', help='flag to save each frame of the zoom as an image',
-                        dest='save_frames', action="store_true")
+    parser.add_argument('--mode', dest='modes', action='append', metavar='MODE',
+                        help='Output modes to generate. May be repeated. Choices: gif, image, frames, mono.')
 
-    parser.add_argument('--save-mono', help='flag to save each frame as a monochrome image',
-                        dest='save_mono', action="store_true")
+    parser.add_argument('--output', dest='output', type=str,
+                        help='Destination for single-file outputs (gif/image) or container directory when both are requested.')
+
+    parser.add_argument('--frame-dir', dest='frame_dir', type=str,
+                        help='Directory in which to store frame sequences (frames/mono or temporary GIF frames).')
+
+    parser.add_argument('--keep-frames', dest='keep_frames', action='store_true',
+                        help='When generating a GIF, keep the individual frames in frame-dir in addition to the GIF file.')
+
+    parser.add_argument('--save-frames', dest='legacy_save_frames', action='store_true',
+                        help='[DEPRECATED] Equivalent to --mode frames. May not be combined with --mode.')
+
+    parser.add_argument('--save-mono', dest='legacy_save_mono', action='store_true',
+                        help='[DEPRECATED] Equivalent to --mode mono. May not be combined with --mode.')
 
     parser.add_argument('--colormap', type=str,
                         dest='colormap', help='matplotlib colormap to colorize the fractal (e.g. "viridis", "inferno")',
                         metavar='COLORMAP', default='twilight_shifted')
 
     parser.add_argument('--format', type=str,
-                        dest='format', help='file format for the saved frames. Can be any file extension supported by Pillow. Example: \'jpeg\', \'png\', \'bmp\', etc. Default: \'png\'',
+                        dest='format', help='file format for image-based outputs. Can be any extension supported by Pillow. Default: "png".',
                         metavar='FORMAT', default='png')
 
     parser.add_argument('--frames-path', type=str,
-                        dest='frames_path', help='path to the directory in which to store the individual frames',
-                        metavar='FRAMES_PATH', default='./frames')
+                        dest='legacy_frames_path', help='[DEPRECATED] Alias for --frame-dir.',
+                        metavar='FRAMES_PATH')
 
     parser.add_argument('--show-edges', help='render the edge detection beside',
                         dest='show_edges', action="store_true")
@@ -155,6 +182,145 @@ def build_parser():
                         help='Enable verbose logging, including TensorFlow and hardware diagnostics.')
 
     return parser
+
+
+def _normalize_path(path_str: str) -> str:
+    return os.path.normpath(os.path.abspath(os.path.expanduser(path_str)))
+
+
+def resolve_output_config(opt, parser: ArgumentParser) -> OutputConfig:
+    valid_modes = {"gif", "image", "frames", "mono"}
+    modes: list[str] = []
+    explicit_modes = opt.modes or []
+    if explicit_modes:
+        modes.extend(explicit_modes)
+
+    if getattr(opt, "legacy_save_frames", False):
+        if explicit_modes:
+            parser.error("--save-frames (deprecated) cannot be combined with --mode.")
+        warnings.warn("--save-frames is deprecated; use --mode frames instead.", DeprecationWarning, stacklevel=2)
+        modes.append("frames")
+
+    if getattr(opt, "legacy_save_mono", False):
+        if explicit_modes:
+            parser.error("--save-mono (deprecated) cannot be combined with --mode.")
+        warnings.warn("--save-mono is deprecated; use --mode mono instead.", DeprecationWarning, stacklevel=2)
+        modes.append("mono")
+
+    if not modes:
+        modes = ["gif"]
+
+    normalized_modes: list[str] = []
+    for mode in modes:
+        if mode not in valid_modes:
+            parser.error(f"Unknown output mode '{mode}'. Valid choices: {', '.join(sorted(valid_modes))}.")
+        if mode not in normalized_modes:
+            normalized_modes.append(mode)
+
+    modes_tuple = tuple(normalized_modes)
+    modes_set = set(modes_tuple)
+
+    keep_frames = bool(getattr(opt, "keep_frames", False))
+    if keep_frames and "gif" not in modes_set:
+        parser.error("--keep-frames requires the gif mode.")
+
+    frame_dir_explicit = getattr(opt, "frame_dir", None)
+    legacy_frame_dir = getattr(opt, "legacy_frames_path", None)
+    if frame_dir_explicit and legacy_frame_dir:
+        normalized_new = _normalize_path(frame_dir_explicit)
+        normalized_legacy = _normalize_path(legacy_frame_dir)
+        if normalized_new != normalized_legacy:
+            parser.error("--frame-dir and --frames-path refer to different locations.")
+
+    frame_dir_value = frame_dir_explicit or legacy_frame_dir
+
+    needs_frame_dir = bool({"frames", "mono"} & modes_set or ("gif" in modes_set and keep_frames))
+    frame_dir_path: Path | None = None
+    if needs_frame_dir:
+        frame_dir_value = frame_dir_value or "./frames"
+        frame_dir_path = Path(frame_dir_value).expanduser().resolve()
+    else:
+        if frame_dir_value is not None:
+            parser.error("--frame-dir is only valid with frames/mono modes or --keep-frames.")
+
+    image_format = (getattr(opt, "format", "png") or "png").lower().lstrip(".")
+    if not image_format:
+        image_format = "png"
+
+    file_modes = [mode for mode in modes_tuple if mode in {"gif", "image"}]
+    output_arg = getattr(opt, "output", None)
+    gif_path: Path | None = None
+    image_path: Path | None = None
+
+    if not file_modes:
+        if output_arg:
+            parser.error("--output is only valid when gif or image modes are requested.")
+    elif len(file_modes) == 1:
+        mode = file_modes[0]
+        if output_arg:
+            output_path = Path(output_arg).expanduser()
+            if str(output_arg).endswith(tuple(filter(None, {os.sep, os.altsep}))) or str(output_arg).endswith("/"):
+                parser.error("--output must be a file path when a single file-based mode is selected.")
+            if output_path.exists() and output_path.is_dir():
+                parser.error("--output must point to a file, not a directory, when a single file mode is active.")
+            if mode == "gif":
+                if output_path.suffix:
+                    if output_path.suffix.lower() != ".gif":
+                        parser.error("GIF outputs must end with .gif.")
+                else:
+                    output_path = output_path.with_suffix(".gif")
+                gif_path = output_path.expanduser().resolve()
+            else:
+                suffix = output_path.suffix
+                expected_suffix = f".{image_format}"
+                if suffix:
+                    if suffix.lower() != expected_suffix.lower():
+                        parser.error(f"--output extension {suffix} does not match --format {image_format}.")
+                else:
+                    output_path = output_path.with_suffix(expected_suffix)
+                image_path = output_path.expanduser().resolve()
+        else:
+            if mode == "gif":
+                gif_path = Path("movie.gif").expanduser().resolve()
+            else:
+                image_path = Path(f"frame_final.{image_format}").expanduser().resolve()
+    else:
+        base_dir = Path(output_arg).expanduser() if output_arg else Path.cwd()
+        if base_dir.exists():
+            if not base_dir.is_dir():
+                parser.error("--output must be a directory when both gif and image modes are active.")
+        else:
+            base_dir.mkdir(parents=True, exist_ok=True)
+        gif_path = (base_dir / "movie.gif").expanduser().resolve()
+        image_path = (base_dir / f"frame_final.{image_format}").expanduser().resolve()
+
+    if gif_path is None and "gif" in modes_set:
+        gif_path = Path("movie.gif").expanduser().resolve()
+    if image_path is None and "image" in modes_set:
+        image_path = Path(f"frame_final.{image_format}").expanduser().resolve()
+
+    save_color_frames = "frames" in modes_set or ("gif" in modes_set and keep_frames)
+    save_mono_frames = "mono" in modes_set
+
+    return OutputConfig(
+        modes=modes_tuple,
+        gif_path=gif_path,
+        image_path=image_path,
+        frame_dir=frame_dir_path,
+        save_color_frames=save_color_frames,
+        save_mono_frames=save_mono_frames,
+        keep_frames=keep_frames,
+        image_format=image_format,
+    )
+
+
+def _pil_format_name(ext: str) -> str:
+    upper = ext.upper()
+    if upper == "JPG":
+        return "JPEG"
+    if upper == "TIF":
+        return "TIFF"
+    return upper
 
 
 HORIZON = 4
@@ -327,6 +493,8 @@ def main():
     parser = build_parser()
     opt = parser.parse_args()
 
+    output_config = resolve_output_config(opt, parser)
+
     global VERBOSE
     VERBOSE = bool(opt.verbose)
 
@@ -341,8 +509,14 @@ def main():
     image_generator.aspect = np.float64(image_generator.y_res / image_generator.x_res) if image_generator.x_res != 0 else np.float64(1.0)
     if opt.lock_aspect:
         image_generator.y_width = np.float64(image_generator.x_width * image_generator.aspect)
-    images = []
     cmap = get_colormap(opt.colormap)
+
+    if output_config.frame_dir is not None:
+        output_config.frame_dir.mkdir(parents=True, exist_ok=True)
+    if output_config.gif_path is not None:
+        output_config.gif_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_config.image_path is not None:
+        output_config.image_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _hex01(hex_color):
         hex_color = hex_color.lstrip('#')
@@ -381,70 +555,81 @@ def main():
 
     per_frame_factors = np.exp(per_frame_logs) if per_frame_logs.size else np.array([], dtype=np.float64)
 
-    if opt.save_frames or opt.save_mono:
-        import os
-        try:
-            os.mkdir(opt.frames_path)
-        except Exception:
-            pass
+    gif_writer = None
+    if "gif" in output_config.modes and output_config.gif_path is not None:
+        gif_writer = imageio.get_writer(str(output_config.gif_path), mode='I', duration=0.1, loop=0)
 
-    for i in range(opt.frames):
-        print("frame {0} out of {1}".format(i, opt.frames), end='\r')
-        zoom_factor = per_frame_factors[i] if per_frame_factors.size else opt.zoom_factor
-        fractal, iters, edges = image_generator.next_image(zoom_factor=zoom_factor)
+    frame_digits = max(3, len(str(max(opt.frames - 1, 0))))
+    final_color_image: PIL.Image.Image | None = None
+    pil_format = _pil_format_name(output_config.image_format)
 
-        inside = (iters >= opt.max_iterations)
-        v = fractal.astype(np.float64, copy=True)
-        normalize_mode = getattr(opt, 'normalize', 'outside')
-        eps = 1e-12
+    try:
+        for i in range(opt.frames):
+            print("frame {0} out of {1}".format(i, opt.frames), end='\r')
+            zoom_factor = per_frame_factors[i] if per_frame_factors.size else opt.zoom_factor
+            fractal, iters, edges = image_generator.next_image(zoom_factor=zoom_factor)
 
-        if normalize_mode == 'outside':
-            selection = v[~inside]
-        else:
-            selection = v
+            inside = (iters >= opt.max_iterations)
+            v = fractal.astype(np.float64, copy=True)
+            normalize_mode = getattr(opt, 'normalize', 'outside')
+            eps = 1e-12
 
-        if selection.size:
-            lo = np.percentile(selection, getattr(opt, 'clip_low', 0.5))
-            hi = np.percentile(selection, getattr(opt, 'clip_high', 99.5))
-            hi = max(hi, lo + eps)
-            v = (np.clip(v, lo, hi) - lo) / (hi - lo)
-        else:
-            v.fill(0.0)
+            if normalize_mode == 'outside':
+                selection = v[~inside]
+            else:
+                selection = v
 
-        gamma = getattr(opt, 'gamma', 0.85)
-        v = np.clip(v, 0.0, 1.0) ** gamma
+            if selection.size:
+                lo = np.percentile(selection, getattr(opt, 'clip_low', 0.5))
+                hi = np.percentile(selection, getattr(opt, 'clip_high', 99.5))
+                hi = max(hi, lo + eps)
+                v = (np.clip(v, lo, hi) - lo) / (hi - lo)
+            else:
+                v.fill(0.0)
 
-        if opt.save_mono:
-            mono = np.uint8(np.clip(v, 0.0, 1.0) * 255)
-            img = PIL.Image.fromarray(mono)
-            img.save(os.path.join(opt.frames_path, 'mono{0:03d}.{1}'.format(i, opt.format)))
+            gamma = getattr(opt, 'gamma', 0.85)
+            v = np.clip(v, 0.0, 1.0) ** gamma
 
-        cmap_input = 1.0 - v if getattr(opt, 'invert', False) else v
-        rgba = np.array(cmap(cmap_input), copy=True)
+            if output_config.save_mono_frames:
+                mono = np.uint8(np.clip(v, 0.0, 1.0) * 255)
+                mono_img = PIL.Image.fromarray(mono)
+                mono_path = output_config.frame_dir / f"mono{i:0{frame_digits}d}.{output_config.image_format}"
+                mono_img.save(str(mono_path), format=pil_format)
 
-        for k in (0, 1, 2):
-            rgba[..., k] = np.where(inside, inside_rgb[k], rgba[..., k])
-        rgba[..., 3] = 1.0
-        rgba_uint8 = np.uint8(np.clip(rgba * 255, 0, 255))
+            cmap_input = 1.0 - v if getattr(opt, 'invert', False) else v
+            rgba = np.array(cmap(cmap_input), copy=True)
 
-        if opt.show_edges:
-            edges_rgba = np.uint8(np.stack((edges,) * 4, axis=-1) * 255)
-            img = PIL.Image.fromarray(np.concatenate((rgba_uint8, edges_rgba), axis=1))
-            images.append(img)
-            if opt.save_frames:
-                img.save(os.path.join(opt.frames_path, 'frame{0:03d}.{1}'.format(i, opt.format)))
-        else:
-            img = PIL.Image.fromarray(rgba_uint8)
-            images.append(img)
-            if opt.save_frames:
-                img.save(os.path.join(opt.frames_path, 'frame{0:03d}.{1}'.format(i, opt.format)))
+            for k in (0, 1, 2):
+                rgba[..., k] = np.where(inside, inside_rgb[k], rgba[..., k])
+            rgba[..., 3] = 1.0
+            rgba_uint8 = np.uint8(np.clip(rgba * 255, 0, 255))
 
-    import imageio
-    images[0].save('movie.gif',
-                   save_all=True,
-                   append_images=images[1:],
-                   duration=100,
-                   loop=0)
+            if opt.show_edges:
+                edges_rgba = np.uint8(np.stack((edges,) * 4, axis=-1) * 255)
+                frame_array = np.concatenate((rgba_uint8, edges_rgba), axis=1)
+            else:
+                frame_array = rgba_uint8
+
+            color_image = PIL.Image.fromarray(frame_array)
+
+            if output_config.save_color_frames and output_config.frame_dir is not None:
+                frame_path = output_config.frame_dir / f"frame{i:0{frame_digits}d}.{output_config.image_format}"
+                color_image.save(str(frame_path), format=pil_format)
+
+            if gif_writer is not None:
+                gif_writer.append_data(frame_array)
+
+            final_color_image = color_image
+
+    finally:
+        if gif_writer is not None:
+            gif_writer.close()
+
+    if final_color_image is None:
+        return
+
+    if output_config.image_path is not None and "image" in output_config.modes:
+        final_color_image.save(str(output_config.image_path), format=pil_format)
 
 
 if __name__ == '__main__':
