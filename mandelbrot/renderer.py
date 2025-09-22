@@ -143,7 +143,8 @@ def render_frame(params: RenderParameters, *, device: Optional[str] = None) -> R
             tf.clip_by_value(tf.fill(tf.shape(ns), max_tensor) - ns, 0, 1),
             tf.bool,
         )
-        edges = tf.math.logical_xor(tf.roll(mask, 1, axis=0), mask)
+        shifted_mask = tf.pad(mask[:-1], [[1, 0], [0, 0]], constant_values=False)
+        edges = tf.math.logical_xor(shifted_mask, mask)
 
     return RenderResult(
         smooth=smooth.numpy(),
