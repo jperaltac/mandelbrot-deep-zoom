@@ -1,4 +1,23 @@
-# Estrategia de salida: estado actual y rediseño propuesto
+# Output strategy: current state and proposed redesign
+
+> 🇪🇸 El contenido original de este documento se conserva más abajo. Se añadió un resumen en inglés para facilitar la colaboración internacional.
+
+## English summary
+
+The renderer currently follows a single hard-coded path: it collects every rendered frame in memory and always produces a `movie.gif` animation. Optional flags (`--save-frames`, `--save-mono`, `--frames-path`) sprinkle extra outputs on top of that workflow.
+
+The redesign proposes an explicit `--mode` flag that can be repeated to request artefacts such as `gif`, `image`, `frames`, and `mono`. This change would:
+
+- prevent undesired outputs (e.g. skipping GIF creation when only stills are needed),
+- avoid conflicting flag combinations by grouping behaviour into well-defined modes,
+- open the door for streaming frames to disk instead of holding everything in memory,
+- offer better defaults for naming and destination paths while still enabling custom locations via `--output` and `--frame-dir`.
+
+Under the proposal, legacy flags remain as aliases but emit deprecation notices. The matrix below (kept from the original write-up) illustrates how each mode maps to its default artefact and location. Additional validations cover extension handling, mutually exclusive options, and quality-of-life checks for power users.
+
+---
+
+## Estrategia de salida: estado actual y rediseño propuesto
 
 ## 1. Flujo de salida existente
 
