@@ -679,6 +679,7 @@ def main():
     final_color_image: PIL.Image.Image | None = None
     final_metadata: SamplingMetadata | None = None
     final_params: RenderParameters | None = None
+    coordinates_annotated = False
 
     try:
         for i in range(opt.frames):
@@ -745,7 +746,21 @@ def main():
                 frame_array = rgba_uint8
 
             need_color_image = writers.requires_color_image(i, opt.frames) or writers.should_store_final_image(i, opt.frames)
-            color_image = PIL.Image.fromarray(frame_array) if need_color_image else None
+
+            if (
+                getattr(opt, "show_coordinates", False)
+                and result.metadata is not None
+            ):
+                annotated_image = annotate_with_coordinates(
+                    PIL.Image.fromarray(frame_array),
+                    result.metadata,
+                    frame_params,
+                )
+                frame_array = np.array(annotated_image, copy=True)
+                color_image = annotated_image if need_color_image else None
+                coordinates_annotated = True
+            else:
+                color_image = PIL.Image.fromarray(frame_array) if need_color_image else None
 
             writers.write_color_outputs(i, frame_array, color_image)
 
@@ -764,6 +779,7 @@ def main():
         and getattr(opt, "show_coordinates", False)
         and final_metadata is not None
         and final_params is not None
+        and not coordinates_annotated
     ):
         final_color_image = annotate_with_coordinates(final_color_image, final_metadata, final_params)
 
