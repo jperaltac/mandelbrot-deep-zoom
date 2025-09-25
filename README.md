@@ -227,6 +227,8 @@ Once frames are on disk, tools such as [ffmpeg](https://ffmpeg.org/), [ImageMagi
 
 ## Command line reference
 
+Para una guía detallada en español con ejemplos ejecutables de cada bandera, revisa [`docs/cli-options.md`](docs/cli-options.md).
+
 ### Geometry and motion
 
 | Flag | Description | Default |
