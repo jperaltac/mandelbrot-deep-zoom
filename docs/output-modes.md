@@ -65,6 +65,7 @@ Notas:
 | `--output PATH` | Ruta | Destino del artefacto principal. Si solo hay un modo con archivo (`gif` o `image`), debe ser una ruta de archivo. Con múltiples modos basados en archivo, debe ser un directorio contenedor. | Depende del modo (ver §3) | `gif`, `image` |
 | `--frame-dir DIR` | Ruta | Directorio donde se escriben los cuadros cuando los modos `frames` o `mono` están activos. Se crea si no existe. | `frames` | `frames`, `mono`, `gif` (solo si se activa `--keep-frames`) |
 | `--keep-frames` | Flag | Para el modo `gif`, solicita conservar los cuadros individuales en `--frame-dir` además del GIF final. | Desactivado | `gif` |
+| `--gif-frame-duration SEG` | Número | Segundos que dura cada cuadro en GIFs generados. Debe ser positivo. | `0.1` | `gif` |
 | `--format EXT` | Cadena | Extensión para los archivos de imagen (`png`, `jpeg`, etc.). Se aplica a `image`, `frames` y `mono`. | `png` | `image`, `frames`, `mono` |
 
 ## 5. Reglas y validaciones

@@ -57,9 +57,9 @@ pip install -r requirements-rocm.txt
    python zoom.py
    ```
    The script renders 100 frames at 512×512 pixels using a smooth ease-in/ease-out curve and the `twilight_shifted` colour palette.
-3. Tweak the resolution or duration by adding flags:
+3. Tweak the resolution or pacing by adding flags:
    ```bash
-   python zoom.py --frames 120 --x-res 768 --y-res 768
+   python zoom.py --frames 120 --gif-frame-duration 0.06 --x-res 768 --y-res 768
    ```
 
 Every run auto-centres on intricate edges that enter the frame and writes the final animation to `movie.gif` in the working directory unless you override the output path.
@@ -266,6 +266,7 @@ Once frames are on disk, tools such as [ffmpeg](https://ffmpeg.org/), [ImageMagi
 | `--output` | Destination for single-file outputs (`gif`, `image`) or the directory that collects every artefact when several modes are requested. | `movie.gif` |
 | `--frame-dir` | Directory for saved frames or temporary GIF frames. | `./frames` |
 | `--keep-frames` | Preserve the individual frames that were used to build a GIF. | Disabled |
+| `--gif-frame-duration` | Seconds that each GIF frame remains on screen. | `0.1` |
 | `--format` | File format for image-based outputs (any Pillow-supported extension). | `png` |
 | `--save-frames`, `--save-mono` | Legacy equivalents to `--mode frames`/`--mode mono`. | Disabled |
 | `--frames-path` | Deprecated alias of `--frame-dir`. | `./frames` |

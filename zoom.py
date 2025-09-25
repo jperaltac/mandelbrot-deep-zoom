@@ -99,6 +99,7 @@ class OutputConfig:
     save_mono_frames: bool
     keep_frames: bool
     image_format: str
+    gif_frame_duration: float
 
 
 def build_parser():
@@ -160,6 +161,8 @@ def build_parser():
 
     parser.add_argument('--keep-frames', dest='keep_frames', action='store_true',
                         help='When generating a GIF, keep the individual frames in frame-dir in addition to the GIF file.')
+    parser.add_argument('--gif-frame-duration', dest='gif_frame_duration', type=float, default=0.1,
+                        help='Seconds that each GIF frame should remain on screen. Must be positive.')
 
     parser.add_argument('--save-frames', dest='legacy_save_frames', action='store_true',
                         help='[DEPRECATED] Equivalent to --mode frames. May not be combined with --mode.')
@@ -236,6 +239,12 @@ def resolve_output_config(opt, parser: ArgumentParser) -> OutputConfig:
     keep_frames = bool(getattr(opt, "keep_frames", False))
     if keep_frames and "gif" not in modes_set:
         parser.error("--keep-frames requires the gif mode.")
+
+    gif_frame_duration = getattr(opt, "gif_frame_duration", 0.1)
+    if gif_frame_duration is None:
+        gif_frame_duration = 0.1
+    if gif_frame_duration <= 0:
+        parser.error("--gif-frame-duration must be greater than zero.")
 
     frame_dir_explicit = getattr(opt, "frame_dir", None)
     legacy_frame_dir = getattr(opt, "legacy_frames_path", None)
@@ -324,6 +333,7 @@ def resolve_output_config(opt, parser: ArgumentParser) -> OutputConfig:
         save_mono_frames=save_mono_frames,
         keep_frames=keep_frames,
         image_format=image_format,
+        gif_frame_duration=gif_frame_duration,
     )
 
 
@@ -719,7 +729,9 @@ class OutputWriters:
         self._needs_final_image = bool("image" in self.config.modes and self.config.image_path is not None)
         self._gif_writer = None
         if "gif" in self.config.modes and self.config.gif_path is not None:
-            self._gif_writer = imageio.get_writer(str(self.config.gif_path), mode='I', duration=0.1, loop=0)
+            self._gif_writer = imageio.get_writer(
+                str(self.config.gif_path), mode='I', duration=self.config.gif_frame_duration, loop=0
+            )
 
     def requires_color_array(self, frame_index: int, total_frames: int) -> bool:
         if self._needs_color_frames or self._gif_writer is not None:
