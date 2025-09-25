@@ -244,42 +244,6 @@ EXAMPLES: list[Example] = [
         clean=[EXAMPLES_ROOT / "gif-frame-duration"],
     ),
     Example(
-        name="save-frames",
-        args=[
-            "--frames",
-            "3",
-            "--save-frames",
-            "--frame-dir",
-            str(EXAMPLES_ROOT / "save-frames" / "frames"),
-            "--x-res",
-            "160",
-            "--y-res",
-            "160",
-        ],
-        expected=[
-            Expected(EXAMPLES_ROOT / "save-frames" / "frames", is_dir=True),
-        ],
-        clean=[EXAMPLES_ROOT / "save-frames"],
-    ),
-    Example(
-        name="save-mono",
-        args=[
-            "--frames",
-            "3",
-            "--save-mono",
-            "--frame-dir",
-            str(EXAMPLES_ROOT / "save-mono" / "mono"),
-            "--x-res",
-            "160",
-            "--y-res",
-            "160",
-        ],
-        expected=[
-            Expected(EXAMPLES_ROOT / "save-mono" / "mono", is_dir=True),
-        ],
-        clean=[EXAMPLES_ROOT / "save-mono"],
-    ),
-    Example(
         name="colormap",
         args=[*BASE_ARGS, "--colormap", "inferno", "--output", str(EXAMPLES_ROOT / "colormap" / "inferno.png")],
         expected=[Expected(EXAMPLES_ROOT / "colormap" / "inferno.png")],

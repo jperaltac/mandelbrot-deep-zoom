@@ -46,13 +46,13 @@ python zoom.py \
   --x-res 1440 \
   --y-res 1440 \
   --max-iterations 6000 \
-  --save-frames \
-  --frames-path deep_frames
+  --mode frames \
+  --frame-dir deep_frames
 ```
 
 - **Render time:** can take tens of minutes; recommend using a GPU.
 - **Result:** `movie.gif` plus `deep_frames/frameNNN.png` for manual selection.
-- **Tweak it:** point `--frames-path` to a fast SSD; if memory is tight, run in chunks (e.g. 300 frames at a time).
+- **Tweak it:** point `--frame-dir` to a fast SSD; if memory is tight, run in chunks (e.g. 300 frames at a time).
 
 ## 4. Static hero image
 

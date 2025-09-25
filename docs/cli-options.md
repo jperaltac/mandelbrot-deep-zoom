@@ -199,26 +199,23 @@ python zoom.py --frames 6 --mode gif --x-res 160 --y-res 160 \
 Resultado: `examples/cli-options/gif-frame-duration/slow.gif`
 
 ### `--save-frames` *(obsoleta)*
-Activa el modo histórico equivalente a `--mode frames`. No puede combinarse con `--mode`.
+Alias histórico de `--mode frames`. Se mantiene para compatibilidad pero emite una advertencia de deprecación. Usa el modo mo
+derno para evitar ruido en la salida:
 
-**Ejemplo**
 ```bash
-python zoom.py --frames 3 --save-frames \
-  --frame-dir examples/cli-options/save-frames/frames \
+python zoom.py --frames 3 --mode frames \
+  --frame-dir examples/cli-options/frame-dir/frames \
   --x-res 160 --y-res 160
 ```
-Resultado: secuencia en `examples/cli-options/save-frames/frames/` (se emite una advertencia de deprecación).
 
 ### `--save-mono` *(obsoleta)*
-Antiguo alias de `--mode mono`. Mantiene la salida en escala de grises.
+Alias histórico de `--mode mono`. Para producir secuencias en escala de grises sin advertencias, recurre al modo equivalente:
 
-**Ejemplo**
 ```bash
-python zoom.py --frames 3 --save-mono \
-  --frame-dir examples/cli-options/save-mono/mono \
+python zoom.py --frames 3 --mode mono \
+  --frame-dir examples/cli-options/mode/mono \
   --x-res 160 --y-res 160
 ```
-Resultado: secuencia monocromática en `examples/cli-options/save-mono/mono/` (con advertencia de deprecación).
 
 ### `--colormap`
 Selecciona el mapa de color de Matplotlib usado para colorear los valores suavizados.
