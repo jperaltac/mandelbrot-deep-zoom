@@ -192,6 +192,15 @@ def build_parser():
     parser.add_argument('--gamma', type=float, default=0.85, help='Gamma correction for tone mapping.')
     parser.add_argument('--clip-low', type=float, default=0.5, help='Lower percentile for normalization clipping.')
     parser.add_argument('--clip-high', type=float, default=99.5, help='Upper percentile for normalization clipping.')
+    parser.add_argument(
+        '--tone-smoothing',
+        type=float,
+        default=0.25,
+        help=(
+            'Temporal smoothing factor for tone mapping percentiles. '
+            'Set to 0 to disable smoothing.'
+        ),
+    )
     parser.add_argument('--invert', action='store_true', help='Invert the selected colormap.')
     parser.add_argument('--inside-color', type=str, default='#000000', help='Hex color for points inside the Mandelbrot set.')
     parser.add_argument('-v', '--verbose', action='store_true',
@@ -843,6 +852,13 @@ def main():
         print(f"Invalid inside_color '{opt.inside_color}', defaulting to black.")
         inside_rgb = (0.0, 0.0, 0.0)
 
+    tone_smoothing = float(max(0.0, getattr(opt, 'tone_smoothing', 0.0)))
+    if tone_smoothing >= 1.0:
+        tone_smoothing = 1.0
+
+    running_lo: float | None = None
+    running_hi: float | None = None
+
     per_frame_factors = compute_zoom_factors(
         opt.frames,
         opt.zoom_factor,
@@ -897,6 +913,17 @@ def main():
                 lo = np.percentile(selection, getattr(opt, 'clip_low', 0.5))
                 hi = np.percentile(selection, getattr(opt, 'clip_high', 99.5))
                 hi = max(hi, lo + eps)
+
+                if running_lo is None or running_hi is None or tone_smoothing == 0.0:
+                    running_lo = lo
+                    running_hi = hi
+                else:
+                    weight = tone_smoothing
+                    running_lo = (1.0 - weight) * running_lo + weight * lo
+                    running_hi = (1.0 - weight) * running_hi + weight * hi
+
+                lo = running_lo
+                hi = max(running_hi, lo + eps)
                 v = (np.clip(v, lo, hi) - lo) / (hi - lo)
             else:
                 v.fill(0.0)

@@ -194,6 +194,7 @@ The resulting `preview.mp4` is a lightweight 3 second clip suitable for social n
 - `--gamma` lifts mid-tones after normalisation. Values below `1.0` increase contrast; values above `1.0` flatten it.
 - `--clip-low`/`--clip-high` discard the dimmest and brightest percentiles before normalisation. This is helpful when a single
   pixel blows out the scale.
+- `--tone-smoothing` blends each frame’s clipping range with its neighbours. Higher values reduce flicker in deep zooms.
 - `--invert` flips the colormap, while `--inside-color` (hex) controls the colour used for points inside the Mandelbrot set.
 
 Combine these with Matplotlib colormaps to build a consistent style guide for your animations.
@@ -257,6 +258,7 @@ Once frames are on disk, tools such as [ffmpeg](https://ffmpeg.org/), [ImageMagi
 | `--normalize {outside,all}` | Choose whether only escaping samples or all samples contribute to histogram normalisation. | `outside` |
 | `--gamma` | Gamma correction applied after normalisation. | `0.85` |
 | `--clip-low`, `--clip-high` | Percentiles that trim the histogram before normalisation. | `0.5`, `99.5` |
+| `--tone-smoothing` | EMA strength applied to the clipping range for consecutive frames. `0` disables smoothing. | `0.25` |
 
 ### Output management
 
