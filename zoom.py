@@ -367,6 +367,101 @@ def write_gif(writer: Any, frame_array: np.ndarray) -> None:
     writer.append_data(frame_array)
 
 
+_FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+)
+
+
+def _load_annotation_font(image: PIL.Image.Image, scale: float = 1.0) -> PIL.ImageFont.ImageFont:
+    base = max(min(image.size), 1)
+    target_size = max(12, int(round(base * 0.028 * scale)))
+    for path in _FONT_CANDIDATES:
+        font_path = Path(path)
+        if font_path.exists():
+            try:
+                return PIL.ImageFont.truetype(str(font_path), target_size)
+            except OSError:
+                continue
+    return PIL.ImageFont.load_default()
+
+
+def _create_vertical_gradient(
+    size: tuple[int, int],
+    top_color: tuple[int, int, int, int],
+    bottom_color: tuple[int, int, int, int],
+) -> PIL.Image.Image:
+    width, height = size
+    if height <= 0 or width <= 0:
+        return PIL.Image.new("RGBA", (max(width, 1), max(height, 1)), (0, 0, 0, 0))
+
+    gradient = PIL.Image.new("RGBA", (width, height))
+    if height == 1:
+        gradient.paste(top_color, [0, 0, width, height])
+        return gradient
+
+    top = tuple(top_color)
+    bottom = tuple(bottom_color)
+    for y in range(height):
+        ratio = y / (height - 1)
+        color = tuple(
+            int(round(top[channel] + (bottom[channel] - top[channel]) * ratio))
+            for channel in range(4)
+        )
+        gradient.paste(color, [0, y, width, y + 1])
+    return gradient
+
+
+def _gradient_panel(
+    size: tuple[int, int],
+    radius: int,
+    top_color: tuple[int, int, int, int],
+    bottom_color: tuple[int, int, int, int],
+) -> PIL.Image.Image:
+    gradient = _create_vertical_gradient(size, top_color, bottom_color)
+    if radius <= 0:
+        return gradient
+
+    mask = PIL.Image.new("L", size, 0)
+    mask_draw = PIL.ImageDraw.Draw(mask)
+    corner_radius = min(radius, min(size) // 2)
+    rounded_rect = getattr(mask_draw, "rounded_rectangle", None)
+    if rounded_rect is not None:
+        rounded_rect([(0, 0), (size[0] - 1, size[1] - 1)], radius=corner_radius, fill=255)
+    else:
+        mask_draw.rectangle([(0, 0), (size[0] - 1, size[1] - 1)], fill=255)
+    transparent = PIL.Image.new("RGBA", size, (0, 0, 0, 0))
+    return PIL.Image.composite(gradient, transparent, mask)
+
+
+def _draw_text_with_shadow(
+    draw: PIL.ImageDraw.ImageDraw,
+    position: tuple[float, float],
+    text: str,
+    font: PIL.ImageFont.ImageFont,
+    fill: tuple[int, int, int, int],
+    *,
+    shadow_fill: tuple[int, int, int, int] = (0, 0, 0, 160),
+    shadow_offset: tuple[int, int] = (2, 2),
+    spacing: int = 0,
+) -> None:
+    shadow_x = position[0] + shadow_offset[0]
+    shadow_y = position[1] + shadow_offset[1]
+    multiline_text = getattr(draw, "multiline_text", None)
+    use_multiline = "\n" in text and multiline_text is not None
+
+    if use_multiline:
+        multiline_text((shadow_x, shadow_y), text, font=font, fill=shadow_fill, spacing=spacing)
+        multiline_text(position, text, font=font, fill=fill, spacing=spacing)
+    else:
+        draw.text((shadow_x, shadow_y), text, font=font, fill=shadow_fill)
+        if "\n" in text and multiline_text is not None:
+            multiline_text(position, text, font=font, fill=fill, spacing=spacing)
+        else:
+            draw.text(position, text, font=font, fill=fill)
+
+
 def annotate_with_coordinates(
     image: PIL.Image.Image,
     metadata: SamplingMetadata,
@@ -378,7 +473,10 @@ def annotate_with_coordinates(
         image = image.convert("RGBA")
 
     draw = PIL.ImageDraw.Draw(image, "RGBA")
-    font = PIL.ImageFont.load_default()
+    panel_font = _load_annotation_font(image, scale=1.0)
+    label_font = _load_annotation_font(image, scale=0.85)
+    panel_font_size = getattr(panel_font, "size", 14)
+    label_font_size = getattr(label_font, "size", 12)
 
     x_max = metadata.x_min + metadata.x_step * max(metadata.x_res - 1, 0)
     y_max = metadata.y_min + metadata.y_step * max(metadata.y_res - 1, 0)
@@ -389,19 +487,19 @@ def annotate_with_coordinates(
         f"Centro: ({params.x_center:.6g}, {params.y_center:.6g})",
     ]
 
-    padding = 8
-    line_spacing = 4
+    padding = max(8, int(round(panel_font_size * 0.6)))
+    line_spacing = max(4, int(round(panel_font_size * 0.35)))
     text_width = 0
     line_heights: list[int] = []
 
     bbox_fn = getattr(draw, "textbbox", None)
     for line in lines:
         if bbox_fn is not None:
-            bbox = bbox_fn((0, 0), line, font=font)
+            bbox = bbox_fn((0, 0), line, font=panel_font)
             width = int(round(bbox[2] - bbox[0]))
             height = int(round(bbox[3] - bbox[1]))
         else:
-            width, height = draw.textsize(line, font=font)
+            width, height = draw.textsize(line, font=panel_font)
         text_width = max(text_width, width)
         line_heights.append(height)
 
@@ -416,14 +514,48 @@ def annotate_with_coordinates(
     box_right = box_left + box_width
     box_bottom = box_top + box_height
 
-    draw.rectangle(
-        [(box_left, box_top), (box_right, box_bottom)],
-        fill=(0, 0, 0, 180),
+    panel_radius = max(10, int(round(min(box_width, box_height) * 0.18)))
+    panel_overlay = _gradient_panel(
+        (box_width, box_height),
+        panel_radius,
+        (18, 22, 40, 210),
+        (10, 12, 24, 150),
     )
+    image.paste(panel_overlay, (box_left, box_top), panel_overlay)
+
+    rounded_rect = getattr(draw, "rounded_rectangle", None)
+    outline_width = max(1, int(round(panel_font_size * 0.08)))
+    outline_color = (255, 255, 255, 45)
+    panel_outline_radius = min(panel_radius, min(box_width, box_height) // 2)
+    if rounded_rect is not None:
+        rounded_rect(
+            [(box_left, box_top), (box_right, box_bottom)],
+            radius=panel_outline_radius,
+            outline=outline_color,
+            width=outline_width,
+        )
+    else:
+        draw.rectangle(
+            [(box_left, box_top), (box_right, box_bottom)],
+            outline=outline_color,
+            width=outline_width,
+        )
 
     text_y = box_top + padding
+    shadow_offset = (
+        max(1, int(round(panel_font_size * 0.1))),
+        max(1, int(round(panel_font_size * 0.1))),
+    )
     for idx, (line, height) in enumerate(zip(lines, line_heights)):
-        draw.text((box_left + padding, text_y), line, font=font, fill=(255, 255, 255, 255))
+        _draw_text_with_shadow(
+            draw,
+            (box_left + padding, text_y),
+            line,
+            panel_font,
+            (240, 244, 255, 255),
+            shadow_fill=(0, 0, 0, 170),
+            shadow_offset=shadow_offset,
+        )
         increment = height + (line_spacing if idx < len(lines) - 1 else 0)
         text_y += increment
 
@@ -438,34 +570,43 @@ def annotate_with_coordinates(
             origin_row = int(round((0.0 - metadata.y_min) / metadata.y_step))
             if 0 <= origin_col < metadata.x_res and 0 <= origin_row < metadata.y_res:
                 radius = max(3, int(round(min(metadata.x_res, metadata.y_res) * 0.005)))
+                ellipse_bbox = [
+                    (origin_col - radius, origin_row - radius),
+                    (origin_col + radius, origin_row + radius),
+                ]
+                shadow_radius = radius + max(1, radius // 3)
+                shadow_bbox = [
+                    (origin_col - shadow_radius, origin_row - shadow_radius),
+                    (origin_col + shadow_radius, origin_row + shadow_radius),
+                ]
+                draw.ellipse(shadow_bbox, fill=(0, 0, 0, 120))
                 draw.ellipse(
-                    [
-                        (origin_col - radius, origin_row - radius),
-                        (origin_col + radius, origin_row + radius),
-                    ],
-                    fill=(255, 255, 255, 255),
+                    ellipse_bbox,
+                    fill=(255, 255, 255, 235),
+                    outline=(0, 0, 0, 180),
+                    width=max(1, radius // 2),
                 )
 
     region_width = min(image.width, metadata.x_res) if metadata.x_res > 0 else image.width
     region_height = min(image.height, metadata.y_res) if metadata.y_res > 0 else image.height
 
     if region_width > 0 and region_height > 0:
-        label_margin = 10
-        label_padding = 4
-        label_spacing = 2
+        label_margin = max(10, int(round(label_font_size * 1.1)))
+        label_padding = max(4, int(round(label_font_size * 0.45)))
+        label_spacing = max(2, int(round(label_font_size * 0.3)))
 
         multiline_bbox = getattr(draw, "multiline_textbbox", None)
         multiline_size = getattr(draw, "multiline_textsize", None)
 
         def measure(text: str) -> tuple[int, int]:
             if multiline_bbox is not None:
-                bbox = multiline_bbox((0, 0), text, font=font, spacing=label_spacing)
+                bbox = multiline_bbox((0, 0), text, font=label_font, spacing=label_spacing)
                 width = int(round(bbox[2] - bbox[0]))
                 height = int(round(bbox[3] - bbox[1]))
             elif multiline_size is not None:
-                width, height = multiline_size(text, font=font, spacing=label_spacing)
+                width, height = multiline_size(text, font=label_font, spacing=label_spacing)
             else:
-                width, height = draw.textsize(text, font=font)
+                width, height = draw.textsize(text, font=label_font)
             return width, height
 
         def clamp(value: float, low: float, high: float) -> float:
@@ -521,17 +662,46 @@ def annotate_with_coordinates(
                 (x - label_padding, y - label_padding),
                 (x + text_width + label_padding, y + text_height + label_padding),
             ]
-            draw.rectangle(rect_coords, fill=(0, 0, 0, 150))
-            if multiline_bbox is not None or multiline_size is not None:
-                draw.multiline_text(
-                    (x, y),
-                    text,
-                    font=font,
-                    fill=(255, 255, 255, 255),
-                    spacing=label_spacing,
+            bg_width = text_width + label_padding * 2
+            bg_height = text_height + label_padding * 2
+            label_radius = max(6, int(round(label_font_size * 0.75)))
+            label_overlay = _gradient_panel(
+                (bg_width, bg_height),
+                label_radius,
+                (32, 38, 70, 200),
+                (18, 22, 48, 150),
+            )
+            image.paste(label_overlay, (x - label_padding, y - label_padding), label_overlay)
+
+            if rounded_rect is not None:
+                label_outline_radius = min(label_radius, min(bg_width, bg_height) // 2)
+                rounded_rect(
+                    rect_coords,
+                    radius=label_outline_radius,
+                    outline=(255, 255, 255, 35),
+                    width=max(1, int(round(label_font_size * 0.08))),
                 )
             else:
-                draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
+                draw.rectangle(
+                    rect_coords,
+                    outline=(255, 255, 255, 35),
+                    width=max(1, int(round(label_font_size * 0.08))),
+                )
+
+            label_shadow_offset = (
+                max(1, int(round(label_font_size * 0.08))),
+                max(1, int(round(label_font_size * 0.08))),
+            )
+            _draw_text_with_shadow(
+                draw,
+                (x, y),
+                text,
+                label_font,
+                (235, 240, 255, 255),
+                shadow_fill=(0, 0, 0, 160),
+                shadow_offset=label_shadow_offset,
+                spacing=label_spacing,
+            )
 
     return image
 
