@@ -4,7 +4,7 @@
 
 ## English summary
 
-The renderer currently follows a single hard-coded path: it collects every rendered frame in memory and always produces a `movie.gif` animation. Optional flags (`--save-frames`, `--save-mono`, `--frames-path`) sprinkle extra outputs on top of that workflow.
+The renderer currently follows a single hard-coded path: it collects every rendered frame in memory and always produces a `movie.gif` animation. Optional legacy flags (`--save-frames`, `--save-mono`, `--frames-path`) used to sprinkle extra outputs on top of that workflow, but they have been replaced by an explicit `--mode` selector and `--frame-dir`.
 
 The redesign proposes an explicit `--mode` flag that can be repeated to request artefacts such as `gif`, `image`, `frames`, and `mono`. This change would:
 
@@ -27,20 +27,20 @@ Under the proposal, legacy flags remain as aliases but emit deprecation notices.
 - El nombre del archivo (`movie.gif`) y la duración del cuadro están codificados; no existe un flag CLI para cambiarlos.
 
 ### 1.2 Guardado opcional de cuadros individuales
-- Los flags `--save-frames` y `--save-mono` activan la escritura en disco de los cuadros coloreados y/o monocromáticos.
-- Cuando alguno de estos flags está activo se crea (si es necesario) el directorio indicado por `--frames-path` (por defecto `./frames`).
+- Los modos `frames` y `mono` (`--mode frames`/`--mode mono`) —o sus alias históricos `--save-frames` y `--save-mono`— activan la escritura en disco de los cuadros coloreados y/o monocromáticos.
+- Cuando alguno de estos modos está activo se crea (si es necesario) el directorio indicado por `--frame-dir` (alias legacy: `--frames-path`, por defecto `./frames`).
 - Las imágenes coloreadas se guardan como `frame{NNN}.{format}`; el formato se controla con `--format` (valor por defecto `png`).
 - Las imágenes monocromáticas se guardan como `mono{NNN}.{format}` reutilizando el mismo formato indicado por `--format`.
 - Si `--show-edges` está activo, cada archivo `frame{NNN}` contiene la composición de la imagen RGB y la visualización de bordes concatenada.
 
 ### 1.3 Otros parámetros relevantes
-- `--save-frames` y `--save-mono` no afectan a la generación del GIF: este se produce siempre.
+- Los modos `frames` y `mono` (o sus alias) no afectan a la generación del GIF: este se produce siempre.
 - No hay forma de evitar la acumulación en memoria de todos los cuadros, ya que la lista `images` se necesita para guardar el GIF al final.
 - Tampoco existen rutas configurables para el GIF ni para un único fotograma final.
 
 ## 2. Limitaciones detectadas
 1. **Salida fija**: el flujo actual siempre produce `movie.gif`, incluso cuando el usuario solo desea un fotograma o una secuencia de archivos.
-2. **Flags superpuestos**: `--save-frames`, `--save-mono` y `--frames-path` representan modos de salida, pero se expresan como flags independientes que pueden entrar en combinaciones incoherentes.
+2. **Flags superpuestos**: `--mode frames`, `--mode mono` y la antigua `--frames-path` representan modos de salida, pero en su forma legacy se expresaban como flags independientes que podían generar combinaciones incoherentes.
 3. **Acumulación de memoria**: la necesidad de guardar todos los cuadros para crear el GIF puede ser un problema con secuencias largas.
 
 ## 3. Matriz de modos propuesta
