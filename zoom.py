@@ -89,6 +89,115 @@ else:
 from argparse import ArgumentParser
 
 
+_SQRT2 = np.float64(np.sqrt(2.0))
+
+
+def _pseudo_random_noise(shape: tuple[int, int]) -> np.ndarray:
+    """Generate deterministic pseudo-random noise in [-1, 1] for ``shape``."""
+
+    rows, cols = np.indices(shape, dtype=np.uint32)
+    hash_vals = rows.astype(np.uint64) * np.uint64(374761393)
+    hash_vals += cols.astype(np.uint64) * np.uint64(668265263)
+    hash_vals ^= hash_vals >> np.uint64(13)
+    hash_vals *= np.uint64(1274126177)
+    hash_vals ^= hash_vals >> np.uint64(16)
+    noise = (hash_vals & np.uint64(0xFFFFFFFF)) / np.float64(0xFFFFFFFF)
+    return noise.astype(np.float64) * 2.0 - 1.0
+
+
+def _distance_transform(mask: np.ndarray) -> np.ndarray:
+    """Approximate Euclidean distance to the boundary for ``mask``."""
+
+    if not mask.any():
+        return np.zeros(mask.shape, dtype=np.float64)
+
+    rows_present = np.any(mask, axis=1)
+    cols_present = np.any(mask, axis=0)
+    row_indices = np.where(rows_present)[0]
+    col_indices = np.where(cols_present)[0]
+    row_min, row_max = row_indices[0], row_indices[-1]
+    col_min, col_max = col_indices[0], col_indices[-1]
+    submask = mask[row_min : row_max + 1, col_min : col_max + 1]
+
+    height, width = submask.shape
+    dist = np.where(submask, np.inf, 0.0).astype(np.float64, copy=False)
+
+    border = np.zeros_like(submask, dtype=bool)
+    border[0, :] |= submask[0, :]
+    border[-1, :] |= submask[-1, :]
+    border[:, 0] |= submask[:, 0]
+    border[:, -1] |= submask[:, -1]
+    dist[border] = 0.0
+
+    for r in range(height):
+        for c in range(width):
+            if not submask[r, c]:
+                continue
+            best = dist[r, c]
+            if r > 0:
+                best = min(best, dist[r - 1, c] + 1.0)
+                if c > 0:
+                    best = min(best, dist[r - 1, c - 1] + _SQRT2)
+                if c < width - 1:
+                    best = min(best, dist[r - 1, c + 1] + _SQRT2)
+            if c > 0:
+                best = min(best, dist[r, c - 1] + 1.0)
+            dist[r, c] = best
+
+    for r in range(height - 1, -1, -1):
+        for c in range(width - 1, -1, -1):
+            if not submask[r, c]:
+                continue
+            best = dist[r, c]
+            if r < height - 1:
+                best = min(best, dist[r + 1, c] + 1.0)
+                if c > 0:
+                    best = min(best, dist[r + 1, c - 1] + _SQRT2)
+                if c < width - 1:
+                    best = min(best, dist[r + 1, c + 1] + _SQRT2)
+            if c < width - 1:
+                best = min(best, dist[r, c + 1] + 1.0)
+            dist[r, c] = best
+
+    dist[submask == 0] = 0.0
+
+    result = np.zeros(mask.shape, dtype=np.float64)
+    result[row_min : row_max + 1, col_min : col_max + 1] = dist
+    return result
+
+
+def _compute_inside_shading(inside: np.ndarray) -> np.ndarray:
+    """Compute a smooth shading field for the interior of the Mandelbrot set."""
+
+    distances = _distance_transform(inside)
+    if not np.any(distances):
+        shading = np.clip(0.5 + _pseudo_random_noise(inside.shape) * 0.08, 0.0, 1.0)
+        shading[~inside] = 0.0
+        return shading
+
+    max_distance = float(distances[inside].max()) if inside.any() else 0.0
+    if max_distance <= 0.0:
+        normalized = np.ones_like(distances)
+    else:
+        normalized = 1.0 - np.clip(distances / max_distance, 0.0, 1.0)
+
+    normalized = normalized ** 0.75
+    noise = _pseudo_random_noise(inside.shape) * 0.08
+    shading = np.clip(normalized + noise, 0.0, 1.0)
+    shading[~inside] = 0.0
+    return shading
+
+
+def _apply_inside_color(base_rgb: tuple[float, float, float], shading: np.ndarray) -> np.ndarray:
+    """Blend highlight and shadow tones based on ``shading`` in [0, 1]."""
+
+    base = np.asarray(base_rgb, dtype=np.float64)
+    shadow = base * 0.65
+    highlight = np.clip(base + (1.0 - base) * 0.35, 0.0, 1.0)
+    shade = shading[..., np.newaxis]
+    return shadow + (highlight - shadow) * shade
+
+
 @dataclass
 class OutputConfig:
     modes: tuple[str, ...]
@@ -943,8 +1052,15 @@ def main():
             cmap_input = 1.0 - v if getattr(opt, 'invert', False) else v
             rgba = np.array(cmap(cmap_input), copy=True)
 
-            for k in (0, 1, 2):
-                rgba[..., k] = np.where(inside, inside_rgb[k], rgba[..., k])
+            inside_shading = _compute_inside_shading(inside) if inside.any() else None
+
+            if inside_shading is not None:
+                shaded_rgb = _apply_inside_color(inside_rgb, inside_shading)
+                for k in (0, 1, 2):
+                    rgba[..., k] = np.where(inside, shaded_rgb[..., k], rgba[..., k])
+            else:
+                for k in (0, 1, 2):
+                    rgba[..., k] = np.where(inside, inside_rgb[k], rgba[..., k])
             rgba[..., 3] = 1.0
             rgba_uint8 = np.uint8(np.clip(rgba * 255, 0, 255))
 
